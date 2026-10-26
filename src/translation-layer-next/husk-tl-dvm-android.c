@@ -981,6 +981,16 @@ static void *gl_main(void *arg)
             makeCurrent(dpy, surf, surf, app);
             jvalue draw = tl_jni_call(A.gl_view, "huskBeginFrame", "()Z", NULL);
             if (tl_jni_pending()) log_pending("a queued GL event");
+            /* the view's surface changed size (laid out again: the app hid the bars, or turned): onSurfaceChanged again, as GLThread does */
+            jvalue rs = tl_jni_call(A.gl_view, "huskTakeResize", "()J", NULL);
+            if (tl_jni_pending()) log_pending("huskTakeResize");
+            if (rs.j) {
+                jvalue p3[3] = { L(gl10), I((int)(rs.j >> 32)), I((int)(rs.j & 0xffffffff)) };
+                tl_log_line("javaapp: the GL view is now %dx%d", (int)(rs.j >> 32), (int)(rs.j & 0xffffffff));
+                tl_jni_call(A.gl_renderer, "onSurfaceChanged", "(Ljavax/microedition/khronos/opengles/GL10;II)V", p3);
+                if (tl_jni_pending()) log_pending("onSurfaceChanged");
+                draw.z = true;
+            }
             /* a new frame of views needs the scene under it again: what was swapped is gone */
             if (draw.z || fresh || atomic_exchange(&A.render_requested, false)) {
                 tl_jni_call(A.gl_renderer, "onDrawFrame", "(Ljavax/microedition/khronos/opengles/GL10;)V", p1);
