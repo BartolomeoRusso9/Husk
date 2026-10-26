@@ -90,10 +90,23 @@ enum JITBootstrap {
         // buffer with MAP_JIT and the translation layer makes its region itself.
         if canGrantOwnJIT && !stikDebugMayServiceTraps {
             selfGrantTried = true
-            let works = mapJITWorks
-            HuskLog.log("jit", "not trapping for a JIT region (no StikDebug); MAP_JIT \(works ? "executes" : "does not execute") here")
-            if works { lastFailure = nil }
-            return works
+            if mapJITWorks {
+                HuskLog.log("jit", "not trapping for a JIT region (no StikDebug); MAP_JIT executes here")
+                lastFailure = nil
+                return true
+            }
+            // MAP_JIT refused (no dynamic-codesigning after all, or Dopamine): plain memory made executable, which a debugged
+            // process or a jailbreak allows -- made here, with no brk for an attach that answers none (#148)
+            HuskLog.log("jit", "not trapping for a JIT region (no StikDebug); MAP_JIT does not execute here, trying plain memory")
+            prepareCompressedHeap()
+            if husk_ios_jit_prewarm_self(jitBytes) {
+                prewarmed = true
+                lastFailure = nil
+                HuskLog.log("jit", "JIT region made by Husk itself (\(husk_ios_jit_self_route().map { String(cString: $0) } ?? "self"))")
+                return true
+            }
+            releaseUnusedCompressedHeap()
+            return false
         }
         HuskLog.log("jit", "claiming \(jitBytes / (1024 * 1024)) MiB of JIT memory now, "
                          + "before the guest download -- StikDebug does not stay attached")

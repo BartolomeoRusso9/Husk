@@ -475,6 +475,21 @@ HUSK_EXPORT bool husk_ios_jit_prewarm(size_t bytes)
     return husk_prewarmed.rw_addr != NULL;
 }
 
+/*
+ * Before iOS 26, without a trap: the region made by this process itself (MAP_JIT, or plain memory where the process is marked as
+ * debugged or the jailbreak allows invalid pages). For TrollStore's and Dopamine's attach, which answers no brk (#148).
+ */
+HUSK_EXPORT bool husk_ios_jit_prewarm_self(size_t bytes)
+{
+    if (husk_prewarmed.rw_addr) return true;
+    HuskDualMapping m = husk_self_dual_mapping(bytes);
+    if (!m.rw_addr) return false;
+    husk_prewarmed = m;
+    husk_prewarm_done = true;
+    fprintf(stderr, "[husk-jit] prewarm (self, %s) OK: %zu bytes\n", g_self_route ? g_self_route : "?", m.size);
+    return true;
+}
+
 /* The held region, for the native runtime (translation-layer/husk-tl-load.c looks this up by name). */
 HUSK_EXPORT HuskDualMapping *husk_ios_jit_get_mapping(void)
 {
@@ -855,6 +870,7 @@ HuskDualMapping husk_ios_jit_allocate(size_t bytes)
     return husk_ios_jit_allocate_real(bytes);
 }
 bool husk_ios_jit_prewarm(size_t bytes) { (void)bytes; return false; }
+bool husk_ios_jit_prewarm_self(size_t bytes) { (void)bytes; return false; }
 bool husk_ios_jit_reserve_bottom(size_t end) { (void)end; return true; }
 void husk_ios_jit_release(HuskDualMapping *m) { (void)m; }
 void husk_ios_jit_detach(void) {}

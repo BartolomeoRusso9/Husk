@@ -44,6 +44,7 @@ void husk_ios_jit_install_trap_handler(void);
 /* Claim the JIT region while StikDebug is still attached, before the guest
    download. Pass the same size QEMU will ask for (tb-size). */
 bool husk_ios_jit_prewarm(size_t bytes);
+bool husk_ios_jit_prewarm_self(size_t bytes);
 bool husk_ios_jit_is_available(void);
 /* Whether a plain MAP_JIT mapping executes in this process -- the second of the
  * two routes to executable memory, measured rather than predicted. */
