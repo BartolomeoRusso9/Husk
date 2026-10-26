@@ -68,6 +68,7 @@ public class PackageManager {
         PackageInfo p = new PackageInfo();
         p.packageName = pkg; p.versionCode = husk.Manifest.versionCode; p.versionName = husk.Manifest.versionName != null ? husk.Manifest.versionName : "1.0";
         p.firstInstallTime = p.lastUpdateTime = new java.io.File(husk.Native.apkPath()).lastModified();
+        p.installLocation = husk.Manifest.installLocation;
         p.requestedPermissions = husk.Manifest.permissions.toArray(new String[0]);
         p.requestedPermissionsFlags = new int[p.requestedPermissions.length];
         java.util.Arrays.fill(p.requestedPermissionsFlags, PackageInfo.REQUESTED_PERMISSION_GRANTED);
