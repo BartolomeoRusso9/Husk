@@ -115,6 +115,21 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
     }
 }
 
+/// How big the Library's icons are: large (three across on a phone), or small, for a long library (five across).
+enum LibraryIconSize: String, CaseIterable, Identifiable {
+    case large, small
+    static let key = "husk.library.iconSize"
+    var id: String { rawValue }
+    var title: String { self == .large ? "Large Icons" : "Small Icons" }
+    var columns: Int {
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        switch self {
+        case .large: return pad ? 6 : 3
+        case .small: return pad ? 9 : 5
+        }
+    }
+}
+
 /// Everything, from both stores, in one list.
 @MainActor
 enum Launcher {
@@ -784,10 +799,10 @@ struct LibraryScreen: View {
     @ObservedObject private var statuses = GameStatusStore.shared
     @ObservedObject private var compat = CompatibilityStore.shared
     @State private var query = ""
+    @AppStorage(LibraryIconSize.key) private var iconSize: LibraryIconSize = .large
 
     private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top),
-              count: UIDevice.current.userInterfaceIdiom == .pad ? 6 : 3)
+        Array(repeating: GridItem(.flexible(), spacing: iconSize == .small ? 10 : 14, alignment: .top), count: iconSize.columns)
     }
 
     var body: some View {
@@ -800,6 +815,9 @@ struct LibraryScreen: View {
                         Menu {
                             Picker("Show", selection: $router.libraryFilter) {
                                 ForEach(LibraryFilter.allCases) { Text($0.title).tag($0) }
+                            }
+                            Picker("Icons", selection: $iconSize) {
+                                ForEach(LibraryIconSize.allCases) { Label($0.title, systemImage: $0 == .large ? "square.grid.2x2" : "square.grid.3x3").tag($0) }
                             }
                         } label: {
                             Image(systemName: router.libraryFilter == .all ? "line.3.horizontal.decrease.circle"
@@ -869,9 +887,9 @@ struct LibraryScreen: View {
                         .padding(16)
                         .background(Console.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 } else {
-                    LazyVGrid(columns: columns, spacing: 20) {
+                    LazyVGrid(columns: columns, spacing: iconSize == .small ? 14 : 20) {
                         ForEach(items) { item in
-                            HuskLink(value: item.route) { LibraryCell(item: item, caption: caption(item)) }
+                            HuskLink(value: item.route) { LibraryCell(item: item, caption: caption(item), small: iconSize == .small) }
                                 .buttonStyle(CardButtonStyle())
                                 .accessibilityLabel(item.title)
                                 .libraryItemMenu(item) { router.library.append($0) }
@@ -901,25 +919,26 @@ struct LibraryScreen: View {
 private struct LibraryCell: View {
     let item: LibraryItem
     let caption: String?
+    var small = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: small ? 5 : 8) {
             Color.clear
                 .aspectRatio(1, contentMode: .fit)
                 .overlay { GeometryReader { geo in ItemIcon(item: item, size: geo.size.width) } }
-                .overlay(alignment: .topTrailing) { if item.runsInAndroid { AndroidBadge().padding(6) } }
-                .snowCap(height: 7)
-                .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+                .overlay(alignment: .topTrailing) { if item.runsInAndroid, !small { AndroidBadge().padding(6) } }
+                .snowCap(height: small ? 4 : 7)
+                .shadow(color: .black.opacity(0.25), radius: small ? 3 : 6, y: small ? 2 : 3)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
+                HStack(spacing: small ? 3 : 5) {
                     if let status = item.status { StatusDot(status: status) }
                     Text(item.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: small ? 11 : 13, weight: .semibold))
                         .foregroundStyle(Console.text)
                         .lineLimit(1)
                 }
                 if let caption {
-                    Text(caption).font(.system(size: 11)).foregroundStyle(Console.textDim).lineLimit(1)
+                    Text(caption).font(.system(size: small ? 9 : 11)).foregroundStyle(Console.textDim).lineLimit(1)
                 }
             }
         }
