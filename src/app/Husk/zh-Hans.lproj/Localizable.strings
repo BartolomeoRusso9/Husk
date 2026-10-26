@@ -1,0 +1,459 @@
+/* No comment provided by engineer. */
+"%@ and more, running on your iPhone with Husk." = "%@ 等更多应用，用 Husk 在你的 iPhone 上运行。";
+
+/* No comment provided by engineer. */
+"%@ free on this device." = "本设备可用空间 %@。";
+
+/* No comment provided by engineer. */
+"%@ has been started in this run of Husk. Close Husk and open it again to restore saves." = "%@ 已在本次运行中启动过。请完全关闭 Husk 后重新打开，再恢复存档。";
+
+/* No comment provided by engineer. */
+"%@ opens by itself once Android has started." = "安卓启动后，%@ 会自动打开。";
+
+/* No comment provided by engineer. */
+"A backup is a .zip of everything %@ has saved in Husk, to keep in Files or move to another device." = "备份是 %@ 在 Husk 中保存的全部内容的 .zip 文件，可保存在“文件”中或移到另一台设备。";
+
+/* No comment provided by engineer. */
+"A direct link to an APK, a bundle or a zip. It shows in Downloads, then Husk asks where it goes." = "APK、应用包或 zip 的直接链接。它会出现在“下载”中，之后 Husk 会询问放到哪里。";
+
+/* No comment provided by engineer. */
+"A few quick choices first. Everything here can be changed later in Settings." = "先做几个简单的选择。这里的所有设置以后都可以在“设置”中更改。";
+
+/* No comment provided by engineer. */
+"A new look, PS4 games, and hundreds more Android games." = "全新外观、PS4 游戏，以及数百款新的安卓游戏。";
+
+/* No comment provided by engineer. */
+"About this app" = "关于此应用";
+
+/* No comment provided by engineer. */
+"Accent Colour" = "强调色";
+
+/* No comment provided by engineer. */
+"Achievements" = "成就";
+
+/* No comment provided by engineer. */
+"Active Repositories" = "已启用的软件源";
+
+/* No comment provided by engineer. */
+"Add a Game or App" = "添加游戏或应用";
+
+/* No comment provided by engineer. */
+"Add a link to an APK or a file, or the address a computer gives you when it shares a folder." = "添加 APK 或文件的链接，或电脑共享文件夹时给出的地址。";
+
+/* No comment provided by engineer. */
+"Add to Husk" = "添加到 Husk";
+
+/* No comment provided by engineer. */
+"Add your first game" = "添加你的第一个游戏";
+
+/* No comment provided by engineer. */
+"After playing, once per game per update" = "游玩之后，每个游戏每次更新一次";
+
+/* No comment provided by engineer. */
+"An APK is added to your library when it finishes. Anything else goes into the Shared Storage folder, which games see as their phone storage." = "APK 下载完成后会加入你的游戏库。其他文件会放入“共享存储”文件夹，游戏会把它当作手机存储。";
+
+/* No comment provided by engineer. */
+"Android" = "安卓";
+
+/* No comment provided by engineer. */
+"ANDROID" = "安卓";
+
+/* No comment provided by engineer. */
+"Android and PS4 games, on your iPhone." = "安卓和 PS4 游戏，就在你的 iPhone 上。";
+
+/* No comment provided by engineer. */
+"Android and Translation Layer games need JIT. StikJIT, built into Husk, turns it on without a computer." = "安卓和转译层游戏需要 JIT。Husk 内置的 StikJIT 无需电脑即可开启。";
+
+/* No comment provided by engineer. */
+"Android Emulator" = "安卓模拟器";
+
+/* No comment provided by engineer. */
+"Android installs it from where it already is — nothing is copied." = "安卓会直接从原位置安装，不会复制任何内容。";
+
+/* No comment provided by engineer. */
+"Android will boot from cold once, then save a new one." = "安卓会冷启动一次，然后保存新的快照。";
+
+/* No comment provided by engineer. */
+"Another game is already loaded" = "已有另一个游戏在运行";
+
+/* No comment provided by engineer. */
+"App Icon" = "应用图标";
+
+/* No comment provided by engineer. */
+"Appearance" = "外观";
+
+/* No comment provided by engineer. */
+"Ask How Games Ran" = "询问游戏运行情况";
+
+/* No comment provided by engineer. */
+"ATTEMPT LOG" = "尝试日志";
+
+/* No comment provided by engineer. */
+"Back" = "返回";
+
+/* No comment provided by engineer. */
+"Boots the guest as soon as Husk opens, when JIT is available." = "有 JIT 时，Husk 一打开就启动客机系统。";
+
+/* No comment provided by engineer. */
+"Both sides must be between 240 and 2560." = "宽和高都必须在 240 到 2560 之间。";
+
+/* No comment provided by engineer. */
+"Browse and download apps using an anonymous Aurora guest account, or sign in with your Google account." = "使用匿名 Aurora 访客账户浏览和下载应用，或用你的 Google 账户登录。";
+
+/* No comment provided by engineer. */
+"Build %@" = "版本号 %@";
+
+/* No comment provided by engineer. */
+"Chinese, Japanese and Korean" = "中文、日文和韩文";
+
+/* No comment provided by engineer. */
+"Close" = "关闭";
+
+/* No comment provided by engineer. */
+"Compatibility" = "兼容性";
+
+/* No comment provided by engineer. */
+"Continue" = "继续";
+
+/* No comment provided by engineer. */
+"Controller" = "手柄";
+
+/* No comment provided by engineer. */
+"Controls" = "操控";
+
+/* No comment provided by engineer. */
+"Could Not Load" = "无法加载";
+
+/* No comment provided by engineer. */
+"CPU" = "CPU";
+
+/* No comment provided by engineer. */
+"ctrl" = "ctrl";
+
+/* No comment provided by engineer. */
+"Custom" = "自定义";
+
+/* No comment provided by engineer. */
+"Data" = "数据";
+
+/* No comment provided by engineer. */
+"Developer Info" = "开发者信息";
+
+/* No comment provided by engineer. */
+"Display" = "显示";
+
+/* No comment provided by engineer. */
+"Downloads" = "下载";
+
+/* No comment provided by engineer. */
+"Drag a control to move it, or tap one to resize or hide it." = "拖动控件可移动，点按可调整大小或隐藏。";
+
+/* No comment provided by engineer. */
+"Each app is played once JIT is on, watched for 15 seconds, and written down; then Husk closes. Open Husk again for the next one. At the end the results file is offered to share." = "开启 JIT 后逐个运行每个应用，观察 15 秒并记录结果，然后 Husk 关闭。重新打开 Husk 运行下一个。结束后会提供结果文件供分享。";
+
+/* No comment provided by engineer. */
+"Each time Husk opens without JIT, it asks TrollStore to turn it on. TrollStore's URL Scheme setting must be on." = "每次 Husk 在没有 JIT 的情况下打开时，都会请 TrollStore 开启 JIT。需要打开 TrollStore 的 URL Scheme 设置。";
+
+/* No comment provided by engineer. */
+"Enter this code on your %@" = "在你的 %@ 上输入此代码";
+
+/* No comment provided by engineer. */
+"Everything installed or saved inside Android is deleted. Translation layer apps keep their data." = "安卓内安装或保存的所有内容都会被删除。转译层应用会保留它们的数据。";
+
+/* No comment provided by engineer. */
+"Featured Apps" = "精选应用";
+
+/* No comment provided by engineer. */
+"First time? See the setup, or use StikDebug or TrollStore instead" = "第一次？查看设置，或改用 StikDebug 或 TrollStore";
+
+/* No comment provided by engineer. */
+"From the Store" = "来自商店";
+
+/* No comment provided by engineer. */
+"Games and Android can run." = "游戏和安卓可以运行。";
+
+/* No comment provided by engineer. */
+"Google Play Store" = "Google Play 商店";
+
+/* No comment provided by engineer. */
+"GPU" = "GPU";
+
+/* No comment provided by engineer. */
+"Height" = "高度";
+
+/* No comment provided by engineer. */
+"Home Screen" = "主屏幕";
+
+/* No comment provided by engineer. */
+"How each 64-bit library maps onto the iPhone: its relocations, the instructions Husk rewrites, and anything the loader works around." = "每个 64 位库如何映射到 iPhone：它的重定位、Husk 改写的指令，以及加载器绕过的问题。";
+
+/* No comment provided by engineer. */
+"How it connects" = "连接方式";
+
+/* No comment provided by engineer. */
+"How it works" = "工作原理";
+
+/* No comment provided by engineer. */
+"Husk" = "Husk";
+
+/* No comment provided by engineer. */
+"HUSK" = "HUSK";
+
+/* No comment provided by engineer. */
+"Husk %@" = "Husk %@";
+
+/* No comment provided by engineer. */
+"Import Files" = "导入文件";
+
+/* No comment provided by engineer. */
+"It opens as soon as Android answers." = "安卓响应后就会打开。";
+
+/* No comment provided by engineer. */
+"Its data goes with it." = "它的数据会一起删除。";
+
+/* No comment provided by engineer. */
+"JIT" = "JIT";
+
+/* No comment provided by engineer. */
+"JIT is off" = "JIT 已关闭";
+
+/* No comment provided by engineer. */
+"JIT is on" = "JIT 已开启";
+
+/* No comment provided by engineer. */
+"Landscape" = "横屏";
+
+/* No comment provided by engineer. */
+"Last lines" = "最后几行";
+
+/* No comment provided by engineer. */
+"Last Run" = "上次运行";
+
+/* No comment provided by engineer. */
+"Live Activities are off for Husk, so downloads don't show on the Lock Screen or in the Dynamic Island. Turn them on in Settings › Husk › Live Activities." = "Husk 的实时活动已关闭，因此下载不会显示在锁定屏幕或灵动岛上。请在“设置”›“Husk”›“实时活动”中打开。";
+
+/* No comment provided by engineer. */
+"Make a folder named DeveloperTesting in Husk's folder (Files > On My iPhone > Husk) and put the APKs to test in it: an APK each, or a folder per app with its base and split APKs." = "在 Husk 的文件夹（文件 > 我的 iPhone > Husk）中新建名为 DeveloperTesting 的文件夹，并把要测试的 APK 放进去：每个应用一个 APK，或每个应用一个包含基础 APK 和拆分 APK 的文件夹。";
+
+/* No comment provided by engineer. */
+"Mods" = "模组";
+
+/* No comment provided by engineer. */
+"Multitasking" = "多任务";
+
+/* No comment provided by engineer. */
+"No apps found for \"%@\"." = "没有找到“%@”相关的应用。";
+
+/* No comment provided by engineer. */
+"No downloads" = "没有下载";
+
+/* No comment provided by engineer. */
+"No featured apps available. Try searching above." = "暂无精选应用。请尝试在上方搜索。";
+
+/* No comment provided by engineer. */
+"No featured apps right now. Search Google Play above." = "暂无精选应用。请在上方搜索 Google Play。";
+
+/* No comment provided by engineer. */
+"No Results" = "无结果";
+
+/* No comment provided by engineer. */
+"Not on the list yet. Be the first to say how it runs." = "尚未收录。来做第一个报告运行情况的人吧。";
+
+/* No comment provided by engineer. */
+"Not yet" = "还没有";
+
+/* No comment provided by engineer. */
+"Nothing here is called “%@”." = "没有叫“%@”的内容。";
+
+/* No comment provided by engineer. */
+"Nothing matches “%@”. Open Settings › About › Open Console to see what Husk is doing." = "没有匹配“%@”的内容。打开“设置”›“关于”›“打开控制台”查看 Husk 正在做什么。";
+
+/* No comment provided by engineer. */
+"Now" = "现在";
+
+/* No comment provided by engineer. */
+"Opacity" = "不透明度";
+
+/* No comment provided by engineer. */
+"Open Apps in Windows" = "在窗口中打开应用";
+
+/* No comment provided by engineer. */
+"or" = "或";
+
+/* No comment provided by engineer. */
+"Or get it from" = "或者从这里获取";
+
+/* No comment provided by engineer. */
+"Other Ways to Turn On JIT" = "开启 JIT 的其他方式";
+
+/* No comment provided by engineer. */
+"Paste any F-Droid-compatible repository index URL." = "粘贴任意兼容 F-Droid 的软件源索引 URL。";
+
+/* No comment provided by engineer. */
+"Play more. Anywhere." = "畅玩更多，随时随地。";
+
+/* No comment provided by engineer. */
+"Portrait" = "竖屏";
+
+/* No comment provided by engineer. */
+"Preview" = "预览";
+
+/* No comment provided by engineer. */
+"python3 serve-folder.py <folder>" = "python3 serve-folder.py <folder>";
+
+/* No comment provided by engineer. */
+"Quick Actions" = "快捷操作";
+
+/* No comment provided by engineer. */
+"Recently Played" = "最近玩过";
+
+/* No comment provided by engineer. */
+"Renderer" = "渲染器";
+
+/* No comment provided by engineer. */
+"Resolution" = "分辨率";
+
+/* No comment provided by engineer. */
+"Saves" = "存档";
+
+/* No comment provided by engineer. */
+"Saves, settings and caches the game made here are deleted." = "游戏在这里创建的存档、设置和缓存会被删除。";
+
+/* No comment provided by engineer. */
+"Saving keeps Android exactly as it is, so the next start skips booting." = "保存会让安卓保持原样，下次启动可跳过开机过程。";
+
+/* No comment provided by engineer. */
+"Screen" = "屏幕";
+
+/* No comment provided by engineer. */
+"Screenshots" = "截图";
+
+/* No comment provided by engineer. */
+"Search Results" = "搜索结果";
+
+/* No comment provided by engineer. */
+"Select File" = "选择文件";
+
+/* No comment provided by engineer. */
+"serve-folder.py is in Husk's repository, under tools. The folder's contents land at the top of Shared Storage, so serve the folder that holds what a game expects there." = "serve-folder.py 位于 Husk 仓库的 tools 目录下。文件夹中的内容会放到“共享存储”的最顶层，所以请共享游戏期望在那里看到的文件夹。";
+
+/* No comment provided by engineer. */
+"Sideloading" = "侧载";
+
+/* No comment provided by engineer. */
+"Sign In" = "登录";
+
+/* No comment provided by engineer. */
+"Sign In with Google" = "用 Google 登录";
+
+/* No comment provided by engineer. */
+"Sound" = "声音";
+
+/* No comment provided by engineer. */
+"Source URL" = "软件源 URL";
+
+/* No comment provided by engineer. */
+"Start Android to uninstall or look inside the app." = "启动安卓以卸载或查看应用内容。";
+
+/* No comment provided by engineer. */
+"Starting %@…" = "正在启动 %@…";
+
+/* No comment provided by engineer. */
+"Storage" = "存储";
+
+/* No comment provided by engineer. */
+"Supported formats" = "支持的格式";
+
+/* No comment provided by engineer. */
+"Tap with three fingers to show the interface" = "三指点按以显示界面";
+
+/* No comment provided by engineer. */
+"Tested by the Husk team on an iPhone." = "由 Husk 团队在 iPhone 上测试。";
+
+/* No comment provided by engineer. */
+"The end of the log from the last time the game started. Share it when reporting a problem." = "游戏上次启动时日志的末尾。报告问题时请分享它。";
+
+/* No comment provided by engineer. */
+"The game and everything it saved here are deleted from Husk." = "游戏及其在这里保存的所有内容都会从 Husk 中删除。";
+
+/* No comment provided by engineer. */
+"The game stopped" = "游戏已停止";
+
+/* No comment provided by engineer. */
+"The plan, in order, is docs/04-translation-layer.md in Husk's source." = "计划的先后顺序见 Husk 源码中的 docs/04-translation-layer.md。";
+
+/* No comment provided by engineer. */
+"The report holds the full log of that run and which device and build it was on. Nothing is sent anywhere unless you share it." = "报告包含那次运行的完整日志，以及所用的设备和版本。除非你分享，否则不会发送到任何地方。";
+
+/* No comment provided by engineer. */
+"Theme" = "主题";
+
+/* No comment provided by engineer. */
+"This APK has no 64-bit code Husk can run, so it will probably not start." = "这个 APK 没有 Husk 能运行的 64 位代码，因此很可能无法启动。";
+
+/* No comment provided by engineer. */
+"This iPhone" = "这台 iPhone";
+
+/* No comment provided by engineer. */
+"This was removed." = "已被移除。";
+
+/* No comment provided by engineer. */
+"Tints buttons, switches and selected states throughout the app." = "为整个应用中的按钮、开关和选中状态着色。";
+
+/* No comment provided by engineer. */
+"To send a whole folder from a computer on the same Wi‑Fi, run this on it and enter the address it shows:" = "要从同一 Wi‑Fi 下的电脑发送整个文件夹，请在电脑上运行以下命令，并输入它显示的地址：";
+
+/* No comment provided by engineer. */
+"Trending Now" = "热门趋势";
+
+/* No comment provided by engineer. */
+"Turn On" = "开启";
+
+/* No comment provided by engineer. */
+"Turn on JIT" = "开启 JIT";
+
+/* No comment provided by engineer. */
+"Use Guest Account" = "使用访客账户";
+
+/* No comment provided by engineer. */
+"Use Husk while an app runs" = "应用运行时继续使用 Husk";
+
+/* No comment provided by engineer. */
+"Version %@" = "版本 %@";
+
+/* No comment provided by engineer. */
+"Waiting for your %@…" = "正在等待你的 %@…";
+
+/* No comment provided by engineer. */
+"Welcome to Husk" = "欢迎使用 Husk";
+
+/* No comment provided by engineer. */
+"What %@ has saved now is replaced by the backup. Back up first if you want to keep it." = "%@ 现在保存的内容会被备份替换。如果想保留，请先备份。";
+
+/* No comment provided by engineer. */
+"What the game is called in Husk. The game itself is not changed." = "游戏在 Husk 中显示的名称。游戏本身不会被更改。";
+
+/* No comment provided by engineer. */
+"What's New in Husk %@" = "Husk %@ 的新功能";
+
+/* No comment provided by engineer. */
+"Where it stands" = "目前状态";
+
+/* No comment provided by engineer. */
+"Width" = "宽度";
+
+/* No comment provided by engineer. */
+"You can skip this: Husk asks again when a game needs it, and it is in Settings › JIT & Sideload." = "可以跳过：游戏需要时 Husk 会再次询问，也可以在“设置”›“JIT 与侧载”中找到。";
+
+/* No comment provided by engineer. */
+"You have %@. The new version's IPA is on its release page." = "你的版本是 %@。新版本的 IPA 在它的发布页上。";
+
+/* No comment provided by engineer. */
+"Your Husk log helps the developer see what went wrong. Only moderators can read it." = "你的 Husk 日志能帮助开发者找到问题。只有管理员可以查看。";
+
+/* No comment provided by engineer. */
+"Your Name" = "你的名字";
+
+/* No comment provided by engineer. */
+"Your profile, playtime and achievements, on this iPhone and on antiweb.lol." = "你的资料、游戏时长和成就，在这台 iPhone 和 antiweb.lol 上都能看到。";
+
