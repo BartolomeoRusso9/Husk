@@ -374,7 +374,53 @@ final class TLUnityUIView: UIView, UIKeyInput {
     }()
     override var inputAccessoryView: UIView? { engine == .cocos || engine == .sdl || engine == .minecraft || engine == .unity ? keyboardBar : nil }
 
+    /// The keyboard was opened from the screen's keyboard button, not by a field in the app: what is typed then is key presses for
+    /// apps that read keys themselves (an SDL game's menus, a terminal), where the engine has keys to send.
+    var openedByHand = false
+
+    /// Whether the screen's keyboard button can do anything for this engine.
+    var offersKeyboardButton: Bool { canBecomeFirstResponder }
+
+    /// The keyboard button: opens the keyboard when it is away (for an app that never asks for it), puts it away when it is up.
+    func toggleKeyboardByHand() {
+        if isFirstResponder { _ = resignFirstResponder(); return }
+        openedByHand = true
+        keyboardType = .default
+        isSecureTextEntry = false
+        returnKeyType = .default
+        setTyped("")
+        if !becomeFirstResponder() { openedByHand = false }
+    }
+
+    /// Android key codes for what the keyboard types (US layout), with whether shift goes with it.
+    private static func androidKey(_ ch: Character) -> (code: Int32, shift: Bool)? {
+        if let a = ch.asciiValue {
+            switch a {
+            case 97...122: return (29 + Int32(a - 97), false)          // a-z
+            case 65...90: return (29 + Int32(a - 65), true)           // A-Z
+            case 48...57: return (7 + Int32(a - 48), false)           // 0-9
+            default: break
+            }
+        }
+        let shifted: [Character: Int32] = ["!": 8, "@": 9, "#": 10, "$": 11, "%": 12, "^": 13, "&": 14, "*": 15, "(": 16, ")": 7,
+                                           "<": 55, ">": 56, "~": 68, "_": 69, "+": 70, "{": 71, "}": 72, "|": 73, ":": 74, "\"": 75, "?": 76]
+        let plain: [Character: Int32] = [",": 55, ".": 56, "\t": 61, " ": 62, "\n": 66, "`": 68, "-": 69, "=": 70, "[": 71, "]": 72,
+                                         "\\": 73, ";": 74, "'": 75, "/": 76]
+        if let c = plain[ch] { return (c, false) }
+        if let c = shifted[ch] { return (c, true) }
+        return nil
+    }
+    private func pressSDLKeys(_ text: String) {
+        for ch in text {
+            guard let k = Self.androidKey(ch) else { continue }
+            if k.shift { husk_sdl_key(59, 1) }                     // KEYCODE_SHIFT_LEFT
+            husk_sdl_key(k.code, 1); husk_sdl_key(k.code, 0)
+            if k.shift { husk_sdl_key(59, 0) }
+        }
+    }
+
     func insertText(_ text: String) {
+        if openedByHand, engine == .sdl { pressSDLKeys(text); return }
         if engine == .java {
             // The app's own text field shows what is typed; Return is the field's action (a new line in a multi-line one).
             if text == "\n" { husk_java_text_action() } else { husk_java_insert_text(text) }
@@ -401,6 +447,7 @@ final class TLUnityUIView: UIView, UIKeyInput {
     }
 
     func deleteBackward() {
+        if openedByHand, engine == .sdl { husk_sdl_key(67, 1); husk_sdl_key(67, 0); return }   // KEYCODE_DEL
         if engine == .java { husk_java_delete_backward(); return }
         if engine == .flutter { husk_flutter_delete_backward(); return }
         if engine == .unity { husk_unity_delete_backward() }
@@ -437,7 +484,7 @@ final class TLUnityUIView: UIView, UIKeyInput {
                     view.isSecureTextEntry = kind & 0x20 != 0
                     view.returnKeyType = kind & 0x10 != 0 ? .default : .done
                     view.autocapitalizationType = kind & 0xF == 0 && kind & 0x20 == 0 ? .sentences : .none
-                    if view.isFirstResponder { view.reloadInputViews() } else { view.becomeFirstResponder() }
+                    view.openedByHand = false; if view.isFirstResponder { view.reloadInputViews() } else { view.becomeFirstResponder() }
                 } else {
                     view.resignFirstResponder()
                 }
@@ -474,7 +521,7 @@ final class TLUnityUIView: UIView, UIKeyInput {
                 let caps = inputType & 0x7000
                 view.autocapitalizationType = cls != 1 || view.isSecureTextEntry ? .none : caps & 0x1000 != 0 ? .allCharacters : caps & 0x2000 != 0 ? .words : caps & 0x4000 != 0 ? .sentences : .none
                 view.autocorrectionType = cls == 1 && inputType & 0x8000 != 0 ? .yes : .no
-                if view.isFirstResponder { view.reloadInputViews() } else { view.becomeFirstResponder() }
+                view.openedByHand = false; if view.isFirstResponder { view.reloadInputViews() } else { view.becomeFirstResponder() }
             }
         }, { text in
             guard let text else { return }
@@ -583,6 +630,7 @@ final class TLUnityUIView: UIView, UIKeyInput {
                     var buf = [CChar](repeating: 0, count: 16384)
                     husk_ga_text(&buf, UInt(buf.count))
                     view.setTyped(String(cString: buf))
+                    view.openedByHand = false
                     view.becomeFirstResponder()
                 } else {
                     view.resignFirstResponder()
@@ -619,7 +667,7 @@ final class TLUnityUIView: UIView, UIKeyInput {
                     var buf = [CChar](repeating: 0, count: 4096)
                     husk_unity_text(&buf, UInt(buf.count))
                     view.setTyped(view.isSecureTextEntry ? "" : String(cString: buf))
-                    if view.isFirstResponder { view.reloadInputViews() } else { view.becomeFirstResponder() }
+                    view.openedByHand = false; if view.isFirstResponder { view.reloadInputViews() } else { view.becomeFirstResponder() }
                 } else {
                     view.resignFirstResponder()
                 }
@@ -628,6 +676,7 @@ final class TLUnityUIView: UIView, UIKeyInput {
     }
 
     override func resignFirstResponder() -> Bool {
+        openedByHand = false
         // Put away without Done (the game hid it, or the view went): the field is dismissed, as the dialog's back button does.
         if engine == .unity { husk_unity_finish_text(0) }
         return super.resignFirstResponder()
@@ -638,7 +687,7 @@ final class TLUnityUIView: UIView, UIKeyInput {
         husk_sdl_set_keyboard_handler { action in
             DispatchQueue.main.async {
                 guard let view = TLUnityUIView.cocosView else { return }
-                if action == 1 { view.setTyped(""); view.becomeFirstResponder() } else { view.resignFirstResponder() }
+                if action == 1 { view.openedByHand = false; view.setTyped(""); view.becomeFirstResponder() } else { view.resignFirstResponder() }
             }
         }
     }
@@ -985,6 +1034,13 @@ struct TLCocosAttemptView: View {
                     }
                     .tint(editingPad ? .yellow : .white)
                 }
+            }
+            if TLUnityUIView.cocosView?.offersKeyboardButton == true, model.state == Int32(HUSK_UNITY_RUNNING) {
+                Button { TLUnityUIView.cocosView?.toggleKeyboardByHand() } label: {
+                    Label("Keyboard", systemImage: "keyboard").font(.system(size: 12, weight: .semibold))
+                }
+                .tint(.white)
+                .accessibilityHint("Shows or hides the keyboard for the app")
             }
             if settings.showStats, model.state == Int32(HUSK_UNITY_RUNNING) {
                 Text(stats).font(.technical(11)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)

@@ -331,13 +331,18 @@ public final class ViewRoot implements ViewParent {
         return h;
     }
     public static boolean dispatchKey(KeyEvent e) {
+        ViewRoot r = keyTarget();
+        if (r == null) return false;
+        if (r.mView.dispatchKeyEventPreIme(e)) return true;
+        return r.mView.dispatchKeyEvent(e);
+    }
+    /** The window keys go to: the top focusable, visible one (its decor hands them to its activity or dialog). */
+    public static ViewRoot keyTarget() {
         for (int i = sRoots.size() - 1; i >= 0; i--) {
             ViewRoot r = sRoots.get(i);
-            if (!r.focusable() || r.mView.getVisibility() != View.VISIBLE) continue;
-            if (r.mView.dispatchKeyEventPreIme(e)) return true;
-            return r.mView.dispatchKeyEvent(e);
+            if (r.focusable() && r.mView.getVisibility() == View.VISIBLE) return r;
         }
-        return false;
+        return null;
     }
     public static boolean dispatchGeneric(MotionEvent e) {
         for (int i = sRoots.size() - 1; i >= 0; i--) {
