@@ -3,42 +3,75 @@ import SwiftUI
 
 // MARK: - the top of every page
 
-/// An item's page opens on its artwork: the icon over a blurred, darkened copy of itself, the name, a line under it, and
-/// the one thing to do -- Play, Open, Start -- as a big button.
+/// An item's page opens on its artwork, large: the name and its platform and status as chips over the bottom of it, then the
+/// one thing to do -- Play, Open, Start -- as a big button, and a row of facts (how it runs, when it was last played).
 private struct PageHero<Action: View>: View {
     let item: LibraryItem
     let subtitle: String
+    var facts: [(symbol: String, text: String)] = []
     @ViewBuilder var action: Action
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 14) {
             ZStack(alignment: .bottomLeading) {
-                ItemBackdrop(item: item, fallback: Color(uiColor: .tertiarySystemFill))
-                LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom)
-                HStack(alignment: .bottom, spacing: 14) {
-                    ItemIcon(item: item, size: 84)
-                        .shadow(color: .black.opacity(0.35), radius: 12, y: 5)
-                    VStack(alignment: .leading, spacing: 4) {
+                ItemBackdrop(item: item, pixels: 1400, fallback: Console.card)
+                LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        if item.artworkPath == nil {
+                            ItemIcon(item: item, size: 68).shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+                        }
                         Text(item.title)
-                            .font(.system(.title2, design: .rounded).weight(.heavy))
+                            .font(.system(size: 30, weight: .bold))
+                            .foregroundStyle(.white)
                             .lineLimit(2)
-                            .minimumScaleFactor(0.8)
-                        Text(subtitle)
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.75))
-                            .lineLimit(2)
+                            .minimumScaleFactor(0.7)
                     }
-                    .foregroundStyle(.white)
-                    Spacer(minLength: 0)
+                    HStack(spacing: 8) {
+                        PageChip(text: item.platformShort, symbol: item.isPS4 ? "playstation.logo" : "iphone", tint: .white)
+                        if let st = item.status {
+                            PageChip(text: st == .plays ? "Works Great" : st.label, symbol: "checkmark.seal.fill", tint: st.color)
+                        }
+                    }
                 }
                 .padding(16)
             }
-            .frame(height: 210)
+            .frame(height: 260)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             action
-                .padding(14)
+            if !facts.isEmpty {
+                HStack(alignment: .top) {
+                    ForEach(Array(facts.enumerated()), id: \.offset) { _, f in
+                        VStack(spacing: 6) {
+                            Image(systemName: f.symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(Console.textDim)
+                            Text(f.text).font(.system(size: 12, weight: .medium)).foregroundStyle(Console.text.opacity(0.85))
+                                .multilineTextAlignment(.center).lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            if !subtitle.isEmpty {
+                Text(subtitle).font(.subheadline).foregroundStyle(Console.textDim)
+            }
         }
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(.vertical, 4)
+    }
+}
+
+/// A chip on an item's artwork: its platform, how it runs.
+private struct PageChip: View {
+    let text: String
+    let symbol: String
+    let tint: Color
+    var body: some View {
+        Label(text, systemImage: symbol)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 9).frame(height: 24)
+            .background(.black.opacity(0.45), in: Capsule())
+            .overlay(Capsule().stroke(tint.opacity(0.35), lineWidth: 0.5))
     }
 }
 
@@ -118,15 +151,27 @@ struct GamePage: View {
 
     private var preflight: AppDiagnosis? { AppDiagnosis.preflight(app) }
 
+    /// Under Play: what runs it, how long it has been played, and when last.
+    private var gameFacts: [(symbol: String, text: String)] {
+        var f: [(symbol: String, text: String)] = [("cpu", app.report?.runnerName ?? "Translation Layer")]
+        let t = Playtime.seconds(LibraryItem.game(app).id)
+        f.append(("gamecontroller", t > 0 ? Playtime.text(t) + " played" : "Not played yet"))
+        if let d = app.lastPlayed {
+            let r = RelativeDateTimeFormatter(); r.unitsStyle = .short
+            f.append(("clock", "Last played\n" + r.localizedString(for: d, relativeTo: Date())))
+        }
+        return f
+    }
+
     private var subtitle: String {
         if let used = LibraryItem.game(app).usedText { return used }
         return runs ? "Ready to play" : "May not run on this iPhone"
     }
 
     var body: some View {
-        List {
+        HuskPageList {
             Section {
-                PageHero(item: .game(app), subtitle: subtitle) { primary }
+                PageHero(item: .game(app), subtitle: subtitle, facts: gameFacts) { primary }
             } footer: {
                 if isGeodeLauncher {
                     Text("This is Geode's Android launcher. On Husk, Geode runs inside Geometry Dash instead: turn it on here "
@@ -383,7 +428,7 @@ struct PS4GamePage: View {
     }
 
     var body: some View {
-        List {
+        HuskPageList {
             PageHero(item: item, subtitle: subtitle) { primary }
                 .heroRow()
             if !PS4Store.available {
@@ -462,7 +507,7 @@ struct AndroidAppPage: View {
     private var item: LibraryItem { .app(live) }
 
     var body: some View {
-        List {
+        HuskPageList {
             Section {
                 PageHero(item: item, subtitle: item.usedText ?? "Runs inside Android") { primary }
             } footer: {
@@ -574,7 +619,7 @@ struct AndroidSystemPage: View {
     private var running: Bool { router.androidStarted }
 
     var body: some View {
-        List {
+        HuskPageList {
             Section {
                 PageHero(item: .android, subtitle: status) {
                     VStack(spacing: 10) {

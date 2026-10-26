@@ -115,6 +115,7 @@
 		81557CC939994CE6350E1C81 /* HuskKeyboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 392BE39CE162757FDA225452 /* HuskKeyboard.swift */; };
 		818D7D89195D77AA70E27DCF /* husk-tl-jni-hle.c in Sources */ = {isa = PBXBuildFile; fileRef = 54E1C79EFAAEBBC6992A36A6 /* husk-tl-jni-hle.c */; };
 		82938DC4F4DEC353D57A59B9 /* husk-tl-flutter-text.c in Sources */ = {isa = PBXBuildFile; fileRef = 9C0AD6C357A94EB7BA2ADF00 /* husk-tl-flutter-text.c */; };
+		83B537870FD7CBF82814453F /* Account.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A099519AE80F7DAC9A65F34 /* Account.swift */; };
 		853E83FF7FF5B9A7FDE5E638 /* BootScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F40192B3EDAD27D2CBFFC2F /* BootScreen.swift */; };
 		8573CC8F200AA844B23AD4F9 /* libFilePickerFix.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = F44A2196AA5F6271BF893660 /* libFilePickerFix.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		8586F8338A93D7526FAEAD97 /* husk-tl-xmem.c in Sources */ = {isa = PBXBuildFile; fileRef = 42CBC0D7ACAB400BDDFD7F9E /* husk-tl-xmem.c */; };
@@ -125,6 +126,7 @@
 		8CA6BE4E0A271053E40DA9BA /* AppDiagnosis.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9651633AB1B5F444EB71B286 /* AppDiagnosis.swift */; };
 		8DBD7C748F519C3321EC0E98 /* WebApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BD91E5537023860BD27A855 /* WebApp.swift */; };
 		8E10E866080B28D4D397970A /* HuskGLView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F337AAF2A6860FCB03810AA6 /* HuskGLView.swift */; };
+		8EB71B572FE75BAE2B8DFE1C /* HuskLogo.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB0175F0167E9295E1BE4C9A /* HuskLogo.swift */; };
 		945DD86A7A210B74B2C7FF17 /* TLScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66DDBC0AF7BE5742AA867515 /* TLScreenView.swift */; };
 		9883B80CE2F3C84E5D6E0A8F /* husk-tl-elf.c in Sources */ = {isa = PBXBuildFile; fileRef = D08FCD7F480D6E2F65F26636 /* husk-tl-elf.c */; };
 		9E3948EF967C2A0773C521DD /* husk-tl-jni-assetstream.c in Sources */ = {isa = PBXBuildFile; fileRef = FD6B5A72980D1EC374BFC326 /* husk-tl-jni-assetstream.c */; };
@@ -153,10 +155,12 @@
 		BE7E302D6F02165C04588DA1 /* CrashReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD3B1227581E9D6E7C9DCC3E /* CrashReport.swift */; };
 		BEDEEECE3AEB59701665C0D3 /* StikJIT.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BBCF8D04E0CEDAB3542C5271 /* StikJIT.xcframework */; };
 		BF3B75F24D911729EFB2E8A6 /* husk-tl-gtasa.c in Sources */ = {isa = PBXBuildFile; fileRef = FCBE4C5BD3BC5033100C968E /* husk-tl-gtasa.c */; };
+		C0FB3932B7412BBBE194BE66 /* GameLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65B72F47C0C6B29BBC1354C2 /* GameLink.swift */; };
 		C1A4C57DAA6BFD79AAE5FD88 /* JITBuiltIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43C233A62FB57030C0818489 /* JITBuiltIn.swift */; };
 		C561B0A164BC213A2A56D9C9 /* husk-tl-zip.c in Sources */ = {isa = PBXBuildFile; fileRef = 9E133BDBB6CB711003066815 /* husk-tl-zip.c */; };
 		CDA36696EE466B42197CA324 /* husk-tl-flutter-plugins.c in Sources */ = {isa = PBXBuildFile; fileRef = 2346959933B43E1D70ECDFC8 /* husk-tl-flutter-plugins.c */; };
 		CEA21B89D80905F908AEF47D /* husk-tl-bionic-str.c in Sources */ = {isa = PBXBuildFile; fileRef = 42C4CB582E3E0D917E2DBB4C /* husk-tl-bionic-str.c */; };
+		D07D926A5BFED72C29F2D3E6 /* SideMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = E43DCD840822E433B4FFBECC /* SideMenu.swift */; };
 		D0C1B402D90EE4224DB8422E /* husk-tl-sdl-apps.c in Sources */ = {isa = PBXBuildFile; fileRef = 2284FD76BFBDA116B1181F5F /* husk-tl-sdl-apps.c */; };
 		D1DB4D94478AB7DD95E1A24E /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79E4865C5FE44ADD210A4917 /* OnboardingView.swift */; };
 		D354FA5AC96B3361B4A5A635 /* ApkMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C3D6F74AFBE5CD222DE0553 /* ApkMetadata.swift */; };
@@ -172,6 +176,7 @@
 		E6975EAFAE86144999E8B267 /* husk-tl-cocos.c in Sources */ = {isa = PBXBuildFile; fileRef = 6B7990E89ED6098029981E38 /* husk-tl-cocos.c */; };
 		E7095C2C706335203227319A /* JITPairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF6C1917FEC08090833D9CF0 /* JITPairing.swift */; };
 		E71E7F636CCD7BBC696B4619 /* GoogleSignInSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92BB8B6B5EA2FAE7198451C0 /* GoogleSignInSheet.swift */; };
+		E8497752FD99F81C20A94AF9 /* ImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B377713385E7AA354D112E6 /* ImportView.swift */; };
 		E89F2DBA752CE5EB77AF9B4A /* husk-tl-dvm-web.m in Sources */ = {isa = PBXBuildFile; fileRef = B08C946B21AA94C98AF6D394 /* husk-tl-dvm-web.m */; };
 		E8E067635E072083A772DADE /* HuskJITHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C1FC868194AB42F653D94F9 /* HuskJITHelper.swift */; };
 		E8F0828C2C030D26E891E528 /* HuskDownloadActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25DB1D606431C481B06C7337 /* HuskDownloadActivity.swift */; };
@@ -323,6 +328,7 @@
 		48DA17A30AE793049F358717 /* DiscoverTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverTab.swift; sourceTree = "<group>"; };
 		48F68F2EBD9951E62113DE0E /* husk-tl-codewrite.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-codewrite.h"; sourceTree = "<group>"; };
 		4A0490485F9BA884A0554EAD /* GuestManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestManifest.swift; sourceTree = "<group>"; };
+		4A099519AE80F7DAC9A65F34 /* Account.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Account.swift; sourceTree = "<group>"; };
 		4B06A9BB292E04A841BE20D2 /* stb_vorbis.inc */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.pascal; path = stb_vorbis.inc; sourceTree = "<group>"; };
 		4B24977AD9B892864CD39481 /* husk-tl-http.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "husk-tl-http.m"; sourceTree = "<group>"; };
 		4B259C39CD9CC4D2A8A3D8E8 /* HuskMetalPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskMetalPresenter.swift; sourceTree = "<group>"; };
@@ -348,6 +354,7 @@
 		642A69428A8151E1B1F75CBB /* husk-tl-dvm.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm.c"; sourceTree = "<group>"; };
 		6492416C2454F2656C7DB40A /* husk-tl-codewrite.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-codewrite.c"; sourceTree = "<group>"; };
 		65972F9D6806424034E38589 /* husk-tl-dvm-annotations.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-annotations.c"; sourceTree = "<group>"; };
+		65B72F47C0C6B29BBC1354C2 /* GameLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameLink.swift; sourceTree = "<group>"; };
 		66DDBC0AF7BE5742AA867515 /* TLScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLScreenView.swift; sourceTree = "<group>"; };
 		6829A7DBA27EDCC20D8C17AD /* Launcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Launcher.swift; sourceTree = "<group>"; };
 		685DEBAD91D2650A85E7BA19 /* StoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreView.swift; sourceTree = "<group>"; };
@@ -355,6 +362,7 @@
 		6990DECA802D2C4493C28A4A /* husk-tl-egl.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-egl.c"; sourceTree = "<group>"; };
 		69B1AB5462FFCEBD084F5605 /* husk-tl-dvm-gles11.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-gles11.c"; sourceTree = "<group>"; };
 		6A015D18C0BBEB07C1AB42C0 /* husk-tl-flutter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-flutter.h"; sourceTree = "<group>"; };
+		6B377713385E7AA354D112E6 /* ImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportView.swift; sourceTree = "<group>"; };
 		6B7990E89ED6098029981E38 /* husk-tl-cocos.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-cocos.c"; sourceTree = "<group>"; };
 		6CAD18BA88F03D63EF1F5DF2 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		6D7C478354C0F283365422FD /* husk-tl-dex.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-dex.h"; sourceTree = "<group>"; };
@@ -453,12 +461,14 @@
 		E314663FF7E2396DE0A0D364 /* libhuskps4.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libhuskps4.dylib; path = "../../build/ios-arm64/lib/libhuskps4.dylib"; sourceTree = "<group>"; };
 		E37298010F80517A3057579E /* BundleUnpacker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundleUnpacker.swift; sourceTree = "<group>"; };
 		E3A701AA76E485A6CE15F106 /* icon-cleardark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-cleardark.png"; sourceTree = "<group>"; };
+		E43DCD840822E433B4FFBECC /* SideMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideMenu.swift; sourceTree = "<group>"; };
 		E4D1C81CB49D39A7D865A0DA /* husk-tl-probe.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-probe.c"; sourceTree = "<group>"; };
 		E6B56E33761AC40E5BEA6BE9 /* IncomingFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomingFiles.swift; sourceTree = "<group>"; };
 		E7F3F73724FABE806D994905 /* husk-tl-prefs.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-prefs.h"; sourceTree = "<group>"; };
 		E8B800E5E712B4EFFB9F5D59 /* husk-tl-bionic.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-bionic.c"; sourceTree = "<group>"; };
 		EA7240C2BD49C9F0CF7CB3DF /* icon-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-dark.png"; sourceTree = "<group>"; };
 		EAB0083C1A580217DEF944CA /* husk-tl-egl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-egl.h"; sourceTree = "<group>"; };
+		EB0175F0167E9295E1BE4C9A /* HuskLogo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskLogo.swift; sourceTree = "<group>"; };
 		ED3F7E0267BE8F2AC09FF772 /* husk-tl-jni-ue4.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-jni-ue4.c"; sourceTree = "<group>"; };
 		EE38587B069F4AC65061C590 /* husk-tl-flutter-plugins.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-flutter-plugins.h"; sourceTree = "<group>"; };
 		EE533073FECAD5C54B677935 /* icon-tinteddark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-tinteddark.png"; sourceTree = "<group>"; };
@@ -511,6 +521,7 @@
 		0F8D2787A26076A289B9B8EA /* Husk */ = {
 			isa = PBXGroup;
 			children = (
+				4A099519AE80F7DAC9A65F34 /* Account.swift */,
 				2C3D6F74AFBE5CD222DE0553 /* ApkMetadata.swift */,
 				3F5C62F392C6EE9D6F1B9407 /* AppClip.swift */,
 				C1F2A4FC567A4CCC74209DD4 /* AppDetailView.swift */,
@@ -534,6 +545,7 @@
 				40BF573E8CED9B238E762BA6 /* FilesTab.swift */,
 				CC860BD7A5AF9DC83B015219 /* fishhook.c */,
 				3B9FC5A63D4CAA7FBDA016EB /* fishhook.h */,
+				65B72F47C0C6B29BBC1354C2 /* GameLink.swift */,
 				7A59295CA11423842CD527E0 /* GameStatus.swift */,
 				9736391C1BCE43667293DB7B /* Geode.swift */,
 				771B4FD56CABC214FEED6DFE /* GuestImage.swift */,
@@ -550,9 +562,11 @@
 				F337AAF2A6860FCB03810AA6 /* HuskGLView.swift */,
 				392BE39CE162757FDA225452 /* HuskKeyboard.swift */,
 				C6541CC4432CA2CE74901320 /* HuskLog.swift */,
+				EB0175F0167E9295E1BE4C9A /* HuskLogo.swift */,
 				4B259C39CD9CC4D2A8A3D8E8 /* HuskMetalPresenter.swift */,
 				D91C1E7D6301EBCE06FEE0FE /* HuskMetalView.swift */,
 				7FFF8E257AE872A53A4E3066 /* HuskRPPairing.h */,
+				6B377713385E7AA354D112E6 /* ImportView.swift */,
 				E6B56E33761AC40E5BEA6BE9 /* IncomingFiles.swift */,
 				FD559A37CF59C3290F29FA43 /* Info.plist */,
 				7087E37F05675CE3FD4EDEE2 /* ItemPages.swift */,
@@ -573,6 +587,7 @@
 				AE14E4B61CC873501D7EAE6E /* SettingsTab.swift */,
 				A523DB1FEA5BC026771035C7 /* Shaders.metal */,
 				FBE40E8DB8AB8EBDF4EA539E /* Showcase.swift */,
+				E43DCD840822E433B4FFBECC /* SideMenu.swift */,
 				319324C01D99446B862A6278 /* TechnicalDetails.swift */,
 				5EB0AF32D5E40E753DDD85DA /* Theme.swift */,
 				5EBCB1A1B865B14C76096042 /* TLAppSettings.swift */,
@@ -1045,6 +1060,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				83B537870FD7CBF82814453F /* Account.swift in Sources */,
 				D354FA5AC96B3361B4A5A635 /* ApkMetadata.swift in Sources */,
 				42B7F8F954D9CF0C84AFD8EE /* AppClip.swift in Sources */,
 				5C20168883D258DF9715F6D9 /* AppDetailView.swift in Sources */,
@@ -1065,6 +1081,7 @@
 				9E74CA82D210C2EE9E6CB09B /* DownloadsTab.swift in Sources */,
 				2B545A13904F3C3CA391F5E5 /* FAQTab.swift in Sources */,
 				48E699E0016694F530355275 /* FilesTab.swift in Sources */,
+				C0FB3932B7412BBBE194BE66 /* GameLink.swift in Sources */,
 				01C829DC8D87A407F2CF98A2 /* GameStatus.swift in Sources */,
 				6EE0DCCC80014D645AC6E23A /* Geode.swift in Sources */,
 				E71E7F636CCD7BBC696B4619 /* GoogleSignInSheet.swift in Sources */,
@@ -1082,8 +1099,10 @@
 				8B5DED1C7C866D7140418522 /* HuskJITMessages.swift in Sources */,
 				81557CC939994CE6350E1C81 /* HuskKeyboard.swift in Sources */,
 				090A2A3F43CE69EA3C079EB0 /* HuskLog.swift in Sources */,
+				8EB71B572FE75BAE2B8DFE1C /* HuskLogo.swift in Sources */,
 				59514CBA483F71A738A3B444 /* HuskMetalPresenter.swift in Sources */,
 				F6880CA30640F688356229CF /* HuskMetalView.swift in Sources */,
+				E8497752FD99F81C20A94AF9 /* ImportView.swift in Sources */,
 				E51DC6B5300ED6D4C45758A5 /* IncomingFiles.swift in Sources */,
 				208720A5CFAFE8E89341843C /* ItemPages.swift in Sources */,
 				507309F42DC8965C816DC580 /* JITBootstrap.swift in Sources */,
@@ -1107,6 +1126,7 @@
 				211C2D134F11C23EE4485A2E /* SettingsTab.swift in Sources */,
 				1624D7BE5D25504F10E6D705 /* Shaders.metal in Sources */,
 				6F6142A042D5107E3F35FBB4 /* Showcase.swift in Sources */,
+				D07D926A5BFED72C29F2D3E6 /* SideMenu.swift in Sources */,
 				14F4718B87230D502748C4D3 /* StoreView.swift in Sources */,
 				EBC8548011E6708CF09F8386 /* TLAppSettings.swift in Sources */,
 				945DD86A7A210B74B2C7FF17 /* TLScreenView.swift in Sources */,

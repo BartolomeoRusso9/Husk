@@ -11,6 +11,8 @@ struct StoreView: View {
     @State private var debouncedSearchText = ""
     @State private var showSignIn = false
     @State private var selectedApp: PlayAPI.PlayApp?
+    @State private var shelf: StoreShelf = .featured
+    @State private var opening: String?
 
     var body: some View {
         NavigationStack {
@@ -24,7 +26,7 @@ struct StoreView: View {
                     storeContent
                 }
             }
-            .background(Theme.backdrop)
+            .background(Console.page.ignoresSafeArea())
             .navigationTitle("Store")
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $searchText, prompt: "Search Google Play")
@@ -77,6 +79,11 @@ struct StoreView: View {
             }
             .sheet(isPresented: $showSignIn) {
                 GoogleSignInSheet()
+            }
+            .onReceive(Router.shared.$storePackage) { pkg in
+                guard let pkg else { return }
+                Router.shared.storePackage = nil
+                open(pkg)
             }
             .sheet(item: $selectedApp) { app in
                 PlayAppDetailSheet(app: app)
@@ -175,7 +182,142 @@ struct StoreView: View {
 
     // MARK: - Store Content
 
+    @ViewBuilder
     private var storeContent: some View {
+        if debouncedSearchText.isEmpty { discover } else { searchList }
+    }
+
+    // MARK: - Discover (the Store's front page)
+
+    private var games: [PlayAPI.PlayApp] { manager.featuredApps.filter { !PlayAPI.featuredAppPackages.contains($0.id) } }
+    private var apps: [PlayAPI.PlayApp] { manager.featuredApps.filter { PlayAPI.featuredAppPackages.contains($0.id) } }
+
+    /// What runs best on Husk, from the compatibility list: the most reported among those that work, with an icon.
+    private var trending: [CompatibilityStore.Entry] {
+        compat.entries.values
+            .filter { $0.status == .works && $0.icon != nil && !manager.featuredApps.map(\.id).contains($0.package) }
+            .sorted { $0.community.reports > $1.community.reports }
+            .prefix(12).map { $0 }
+    }
+
+    private var discover: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack(spacing: 8) {
+                    ForEach(StoreShelf.allCases) { s in
+                        ConsoleChip(title: s.title, selected: shelf == s) { withAnimation(.easeOut(duration: 0.18)) { shelf = s } }
+                    }
+                    Spacer(minLength: 0)
+                }
+                let list = shelf == .apps ? apps : shelf == .games ? games : manager.featuredApps
+                if let lead = list.first { banner(lead) }
+                if shelf != .apps, !games.isEmpty {
+                    row(shelf == .games ? "Games" : "Popular Games", games.dropFirst(shelf == .featured ? 1 : 1).map { $0 })
+                }
+                if shelf != .games, !apps.isEmpty { row("Apps", shelf == .apps ? Array(apps.dropFirst()) : apps) }
+                if shelf != .apps, !trending.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Trending Now").font(.system(size: 20, weight: .bold)).foregroundStyle(Console.text)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(alignment: .top, spacing: 14) {
+                                ForEach(trending, id: \.package) { e in
+                                    Button { open(e.package) } label: {
+                                        tile(title: e.name, icon: e.icon.flatMap { URL(string: $0, relativeTo: CompatibilityStore.site) },
+                                             status: e.status, busy: opening == e.package)
+                                    }
+                                    .buttonStyle(CardButtonStyle())
+                                }
+                            }
+                        }
+                    }
+                }
+                if manager.featuredApps.isEmpty {
+                    Text("No featured apps right now. Search Google Play above.")
+                        .font(.subheadline).foregroundStyle(Console.textDim)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
+        }
+        .background(Console.page.ignoresSafeArea())
+        .refreshable { await manager.loadBrowseApps() }
+    }
+
+    /// The first app of the shelf, big: its own screenshot behind "Discover new worlds."
+    private func banner(_ app: PlayAPI.PlayApp) -> some View {
+        Button { selectedApp = app } label: {
+            ZStack(alignment: .bottomLeading) {
+                Console.card
+                AsyncImage(url: URL(string: app.screenshotURLs.first ?? app.iconURL ?? "")) { phase in
+                    if let image = phase.image { image.resizable().scaledToFill() } else { Console.card }
+                }
+                LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .leading, endPoint: .trailing)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(shelf == .apps ? "Apps for\nevery day." : "Discover\nnew worlds.")
+                        .font(.system(size: 28, weight: .bold)).foregroundStyle(.white)
+                        .multilineTextAlignment(.leading)
+                    Text("\(app.title) and more, running on your iPhone with Husk.")
+                        .font(.system(size: 13)).foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(2).multilineTextAlignment(.leading)
+                }
+                .padding(18)
+            }
+            .frame(height: 180)
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Console.outline, lineWidth: 0.5))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .buttonStyle(CardButtonStyle())
+    }
+
+    private func row(_ title: String, _ list: [PlayAPI.PlayApp]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.system(size: 20, weight: .bold)).foregroundStyle(Console.text)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(list) { app in
+                        Button { selectedApp = app } label: {
+                            tile(title: app.title, icon: URL(string: app.iconURL ?? ""), status: compat.entry(app.id)?.status, busy: false)
+                        }
+                        .buttonStyle(CardButtonStyle())
+                    }
+                }
+            }
+        }
+    }
+
+    private func tile(title: String, icon: URL?, status: CompatibilityStore.Status?, busy: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            AsyncImage(url: icon) { phase in
+                if let image = phase.image { image.resizable().scaledToFill() } else { Console.raised }
+            }
+            .frame(width: 104, height: 104)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay { if busy { ProgressView().tint(.white) } }
+            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Console.text).lineLimit(1)
+            HStack(spacing: 4) {
+                Circle().fill(status?.color ?? Console.textDim).frame(width: 6, height: 6)
+                Text("Android").font(.system(size: 11)).foregroundStyle(Console.textDim)
+            }
+        }
+        .frame(width: 104, alignment: .leading)
+    }
+
+    /// An app from the compatibility list: its Play page, fetched first.
+    private func open(_ package: String) {
+        guard opening == nil, let s = manager.session else { return }
+        opening = package
+        Task {
+            let app = try? await PlayAPI.details(packageName: package, session: s)
+            opening = nil
+            if let app { selectedApp = app } else { manager.errorMessage = "Google Play has no page for \(package) here." }
+        }
+    }
+
+    // MARK: - Search results
+
+    private var searchList: some View {
         List {
             if !debouncedSearchText.isEmpty {
                 Section {
@@ -425,7 +567,7 @@ struct PlayAppDetailSheet: View {
                 }
                 .padding(20)
             }
-            .background(Theme.backdrop)
+            .background(Console.page.ignoresSafeArea())
             .navigationTitle(app.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -475,6 +617,19 @@ struct PlayAppDetailSheet: View {
             Text(title)
                 .font(.caption2)
                 .foregroundStyle(Theme.textDim)
+        }
+    }
+}
+
+/// The Store's pills.
+enum StoreShelf: String, CaseIterable, Identifiable {
+    case featured, games, apps
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .featured: return "Featured"
+        case .games: return "Games"
+        case .apps: return "Apps"
         }
     }
 }

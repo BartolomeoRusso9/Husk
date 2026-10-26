@@ -734,7 +734,9 @@ struct TLAttemptView: View {
     let app: TLApp
 
     var body: some View {
-        content.onAppear { TranslationLayerStore.shared.markPlayed(app) }
+        content
+            .onAppear { TranslationLayerStore.shared.markPlayed(app); Playtime.begin("tl:" + app.id) }
+            .onDisappear { Playtime.end("tl:" + app.id) }
     }
 
     @ViewBuilder

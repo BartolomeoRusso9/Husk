@@ -425,6 +425,8 @@ enum PlayAPI {
         "com.fingersoft.hillclimb",
         "org.libretro.retroarch"
     ]
+    /// The featured ones that are apps rather than games (the Store's Apps pill).
+    static let featuredAppPackages: Set<String> = ["org.videolan.vlc", "org.libretro.retroarch"]
 
     /// Browse top / featured apps
     static func browse(session: PlaySession) async throws -> [PlayApp] {

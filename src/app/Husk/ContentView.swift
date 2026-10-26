@@ -38,6 +38,8 @@ struct ContentView: View {
     @ObservedObject private var updates = AppUpdates.shared
     @State private var showWhatsNew = false
     @AppStorage(Holiday.key) private var holiday = true
+    /// The launch screen (the mark, "Play more. Anywhere."), for a moment as Husk opens.
+    @State private var splash = true
 
     var body: some View {
         ZStack {
@@ -74,6 +76,9 @@ struct ContentView: View {
                 Snowfall().ignoresSafeArea()
             }
 
+            // The side menu, from Home's avatar: over the tabs, under an app's window.
+            if !(showGuestScreen && started && runner.isRunning) { SideMenu().zIndex(1) }
+
             // Multitasking: an app in a window over everything else in Husk (AppWindows.swift).
             AppWindowLayer()
                 .ignoresSafeArea(.keyboard)
@@ -107,6 +112,16 @@ struct ContentView: View {
 
             // Over the tabs and over the start screen: when Husk is starting
             // Android for you, that is the whole screen until it is done.
+            if splash {
+                SplashScreen()
+                    .transition(.opacity)
+                    .zIndex(4)
+                    .task {
+                        try? await Task.sleep(nanoseconds: 1_100_000_000)
+                        withAnimation(.easeInOut(duration: 0.35)) { splash = false }
+                    }
+            }
+
             if booting {
                 BootScreen { withAnimation(.easeInOut(duration: 0.3)) { booting = false } }
                     .transition(.opacity)
@@ -166,6 +181,9 @@ struct ContentView: View {
         .task { await CompatibilityStore.shared.refresh() }
         .sheet(isPresented: $router.showFiles) { FilesTab() }
         .sheet(isPresented: $router.showDownloads) { DownloadsTab() }
+        .sheet(isPresented: $router.showProfile) { ProfileView() }
+        .sheet(isPresented: $router.showImport) { ImportView() }
+        .task { await Account.shared.refresh() }
         // Pictures for the apps here: read the index on launch and whenever the set of apps changes.
         .task(id: showcasePackages) { showcase.refresh(for: showcasePackages) }
         .alert("Metadata Updated", isPresented: Binding(get: { showcase.shouldAsk && !showOnboarding },
