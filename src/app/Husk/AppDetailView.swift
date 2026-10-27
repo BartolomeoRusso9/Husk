@@ -102,7 +102,7 @@ struct AppDetailView: View {
     private var canOpen: Bool { host.isReady && host.busy == nil }
 
     var body: some View {
-        List {
+        HuskPageList {
             Section {
                 header
                 Button {

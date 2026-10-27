@@ -318,7 +318,7 @@ struct StoreView: View {
     // MARK: - Search results
 
     private var searchList: some View {
-        List {
+        HuskPageList {
             if !debouncedSearchText.isEmpty {
                 Section {
                     if manager.isSearching {

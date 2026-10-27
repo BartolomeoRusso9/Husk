@@ -275,7 +275,7 @@ struct CompatReportSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            HuskForm {
                 Section {
                     ForEach([CompatibilityStore.Status.works, .opens, .broken], id: \.self) { s in
                         Button { status = s } label: {

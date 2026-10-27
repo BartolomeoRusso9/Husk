@@ -197,7 +197,7 @@ struct EditProfileView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            HuskForm {
                 Section {
                     HStack {
                         Spacer()

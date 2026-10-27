@@ -10,7 +10,7 @@ struct SettingsTab: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            HuskPageList {
                 Section {
                     Button { Router.shared.showProfile = true } label: { accountCard }
                         .foregroundStyle(.primary)
@@ -174,7 +174,7 @@ struct LibrarySettings: View {
     @State private var working = false
 
     var body: some View {
-        Form {
+        HuskForm {
             Section {
                 DetailRow(label: "Apps", value: "\(host.packages.count)", mono: false)
                 DetailRow(label: "With icons",
@@ -264,7 +264,7 @@ struct FontSettings: View {
     @ObservedObject private var fonts = CJKFonts.shared
 
     var body: some View {
-        Form {
+        HuskForm {
             Section {
                 if fonts.isInstalled {
                     Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
@@ -299,7 +299,7 @@ struct PerformanceSettings: View {
         UserDefaults.standard.object(forKey: "husk.soundDevice") as? Bool ?? true
 
     var body: some View {
-        Form {
+        HuskForm {
             Section {
                 Picker("Renderer", selection: $gpuMode) {
                     Text("GPU").tag(true)
@@ -388,7 +388,7 @@ struct InputSettings: View {
     }
 
     var body: some View {
-        Form {
+        HuskForm {
             Section {
                 Picker("Screen", selection: $landscapeGuest) {
                     Text("Portrait").tag(false)
@@ -520,7 +520,7 @@ struct NetworkSettings: View {
         UserDefaults.standard.object(forKey: "husk.keepNetwork") as? Bool ?? true
 
     var body: some View {
-        Form {
+        HuskForm {
             Section {
                 Toggle("Keep the network across saves", isOn: $keepNetwork)
                     .onChange(of: keepNetwork) { v in
@@ -568,7 +568,7 @@ struct JITSettings: View {
     }
 
     var body: some View {
-        Form {
+        HuskForm {
             Section {
                 JITCard()
             }
@@ -727,7 +727,7 @@ struct SavedMachineSettings: View {
     @AppStorage(GuestImage.askUpdatesKey) private var askUpdates = true
 
     var body: some View {
-        Form {
+        HuskForm {
             Section {
                 Toggle("Save automatically", isOn: $autoSave)
                     .onChange(of: autoSave) { v in
@@ -841,7 +841,7 @@ struct AppearanceSettings: View {
     private let iconColumns = [GridItem(.adaptive(minimum: 92), spacing: 14)]
 
     var body: some View {
-        Form {
+        HuskForm {
             Section {
                 Picker("Appearance", selection: $appearance) {
                     ForEach(Theme.Appearance.allCases) { Text($0.title).tag($0) }
@@ -944,7 +944,7 @@ struct AboutSettings: View {
     @AppStorage(TranslationLayer.devInfoKey) private var devInfo = false
 
     var body: some View {
-        List {
+        HuskPageList {
             Section {
                 VStack(spacing: 8) {
                     HuskMark(size: 84)

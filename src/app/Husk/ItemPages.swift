@@ -163,10 +163,8 @@ struct GamePage: View {
         return f
     }
 
-    private var subtitle: String {
-        if let used = LibraryItem.game(app).usedText { return used }
-        return runs ? "Ready to play" : "May not run on this iPhone"
-    }
+    /// When it was last played is in the facts already: only a warning here.
+    private var subtitle: String { runs ? "" : "May not run on this iPhone" }
 
     var body: some View {
         HuskPageList {
@@ -422,14 +420,21 @@ struct PS4GamePage: View {
         return TranslationLayerStore.shared.apps.first { $0.apks.first == loaded }?.label ?? "Another game"
     }
 
-    private var subtitle: String {
-        if let used = item.usedText { return used }
-        return "PlayStation 4" + (game.version.map { " · v\($0)" } ?? "")
+    /// The same facts as an Android game's: version, how long it has been played, and when last.
+    private var facts: [(symbol: String, text: String)] {
+        var f: [(symbol: String, text: String)] = [("cpu", "PS4 layer" + (game.version.map { "\nv\($0)" } ?? ""))]
+        let t = Playtime.seconds(item.id)
+        f.append(("gamecontroller", t > 0 ? Playtime.text(t) + " played" : "Not played yet"))
+        if let d = game.lastPlayed {
+            let r = RelativeDateTimeFormatter(); r.unitsStyle = .short
+            f.append(("clock", "Last played\n" + r.localizedString(for: d, relativeTo: Date())))
+        }
+        return f
     }
 
     var body: some View {
         HuskPageList {
-            PageHero(item: item, subtitle: subtitle) { primary }
+            PageHero(item: item, subtitle: "", facts: facts) { primary }
                 .heroRow()
             if !PS4Store.available {
                 Section {

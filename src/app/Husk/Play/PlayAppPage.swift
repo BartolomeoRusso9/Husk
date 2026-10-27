@@ -137,23 +137,24 @@ struct PlayAppDetailSheet: View {
         if !app.contentRating.isEmpty { items.append((app.contentRating, "Rated for", nil)) }
         if app.sizeBytes > 0 { items.append((ByteCountFormatter.string(fromByteCount: app.sizeBytes, countStyle: .file), "Size", nil)) }
         if !app.versionString.isEmpty { items.append((app.versionString, "Version", nil)) }
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) {
-                ForEach(items.indices, id: \.self) { i in
-                    if i > 0 { Rectangle().fill(Console.hairline).frame(width: 1, height: 34) }
-                    VStack(spacing: 4) {
-                        HStack(spacing: 3) {
-                            Text(items[i].value).font(.system(size: 16, weight: .bold)).foregroundStyle(Console.text).lineLimit(1)
-                            if let icon = items[i].icon { Image(systemName: icon).font(.system(size: 11)).foregroundStyle(Console.text) }
-                        }
-                        Text(items[i].label).font(.system(size: 12)).foregroundStyle(Console.textDim).lineLimit(1)
+        // three to a row, the rest on the next one
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: min(3, max(1, items.count)))
+        return LazyVGrid(columns: columns, spacing: 16) {
+            ForEach(items.indices, id: \.self) { i in
+                VStack(spacing: 4) {
+                    HStack(spacing: 3) {
+                        Text(items[i].value).font(.system(size: 16, weight: .bold)).foregroundStyle(Console.text)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                        if let icon = items[i].icon { Image(systemName: icon).font(.system(size: 11)).foregroundStyle(Console.text) }
                     }
-                    .padding(.horizontal, 16)
-                    .frame(minWidth: 88)
+                    Text(items[i].label).font(.system(size: 12)).foregroundStyle(Console.textDim)
+                        .lineLimit(1).minimumScaleFactor(0.8)
                 }
+                .frame(maxWidth: .infinity)
             }
-            .padding(.vertical, 12)
         }
+        .padding(.vertical, 14)
+        .padding(.horizontal, 8)
         .background(Console.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Console.outline, lineWidth: 0.5))
     }

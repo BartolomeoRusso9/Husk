@@ -533,7 +533,7 @@ struct TLChecksView: View {
     @ObservedObject private var store = TranslationLayerStore.shared
 
     var body: some View {
-        Form {
+        HuskForm {
             checksSection
             progressSection
         }

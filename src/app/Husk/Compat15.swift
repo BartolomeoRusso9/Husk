@@ -329,3 +329,17 @@ struct HuskPageList<Content: View>: View {
         }
     }
 }
+
+/// The same for a Form: settings pages on the navy too.
+struct HuskForm<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        if #available(iOS 16, *) {
+            Form { Group { content }.listRowBackground(Console.card) }
+                .scrollContentBackground(.hidden)
+                .background(Console.page.ignoresSafeArea())
+        } else {
+            Form { content }
+        }
+    }
+}
