@@ -1,132 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The side menu, from the avatar on Home: the account, Husk's places, quick actions, and the version.
+// The Husk account: the profile page (avatar, name, @handle, games, apps, playtime, recently played, achievements), sign in, editing.
 import SwiftUI
 import UIKit
-
-struct SideMenu: View {
-    @ObservedObject private var router = Router.shared
-    @ObservedObject private var account = Account.shared
-    @State private var showHelp = false
-
-    private let width: CGFloat = min(320, UIScreen.main.bounds.width * 0.82)
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            if router.showSideMenu {
-                Color.black.opacity(0.5)
-                    .ignoresSafeArea()
-                    .onTapGesture { close() }
-                    .transition(.opacity)
-                panel
-                    .frame(width: width)
-                    .frame(maxHeight: .infinity)
-                    .background(Console.page.ignoresSafeArea())
-                    .overlay(alignment: .trailing) { Rectangle().fill(Console.outline).frame(width: 0.5).ignoresSafeArea() }
-                    .transition(.move(edge: .leading))
-                    .gesture(DragGesture().onEnded { if $0.translation.width < -60 { close() } })
-            }
-        }
-        .animation(.snappy(duration: 0.28), value: router.showSideMenu)
-        .sheet(isPresented: $showHelp) { NavigationStack { FAQTab() } }
-    }
-
-    private func close() { router.showSideMenu = false }
-    private func go(_ action: @escaping () -> Void) {
-        close()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: action)
-    }
-
-    private var panel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button { go { router.showProfile = true } } label: {
-                HStack(spacing: 14) {
-                    AccountAvatar(size: 56)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(account.user?.displayName ?? "Sign In")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(Console.text)
-                            .lineLimit(1)
-                        Text(account.user.map { "@" + $0.username } ?? "Your games on every device")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Console.textDim)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
-            .padding(.bottom, 22)
-
-            VStack(spacing: 4) {
-                row("Home", "house.fill", selected: router.tab == .home) { go { router.tab = .home } }
-                row("Library", "books.vertical.fill", selected: router.tab == .library) { go { router.tab = .library } }
-                row("Store", "bag.fill", selected: router.tab == .store) { go { router.tab = .store } }
-                row("Downloads", "arrow.down.circle.fill", selected: false) { go { router.showDownloads = true } }
-                row("Settings", "gearshape.fill", selected: router.tab == .settings) { go { router.tab = .settings } }
-            }
-            .padding(.horizontal, 12)
-
-            Text("Quick Actions")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Console.textDim)
-                .padding(.horizontal, 24)
-                .padding(.top, 26)
-                .padding(.bottom, 8)
-            VStack(spacing: 4) {
-                row("Import APK", "square.and.arrow.down.fill", selected: false) { go { router.showImport = true } }
-                row("Get Games", "square.grid.2x2.fill", selected: false) { go { router.tab = .store } }
-                row("Help & Support", "questionmark.circle.fill", selected: false) { go { showHelp = true } }
-            }
-            .padding(.horizontal, 12)
-
-            Spacer(minLength: 20)
-
-            Button { go { router.tab = .settings } } label: {
-                HStack(spacing: 12) {
-                    HuskLogo(size: 30)
-                        .frame(width: 40, height: 40)
-                        .background(Theme.accent.opacity(0.25), in: Circle())
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Husk \(AppUpdates.current)").font(.system(size: 15, weight: .semibold)).foregroundStyle(Console.text)
-                        Text("Build \(CompatibilityStore.build)").font(.system(size: 12)).foregroundStyle(Console.textDim)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Console.textDim)
-                }
-                .padding(12)
-                .background(Console.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Console.outline, lineWidth: 0.5))
-            }
-            .buttonStyle(CardButtonStyle())
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-        }
-    }
-
-    private func row(_ title: String, _ icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: icon)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(selected ? Theme.accent : Console.text.opacity(0.85))
-                    .frame(width: 24)
-                Text(title)
-                    .font(.system(size: 16, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(Console.text)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 46)
-            .background(selected ? Console.card : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-}
 
 // MARK: - profile
 
@@ -163,7 +38,6 @@ struct ProfileView: View {
             .sheet(isPresented: $editing) { EditProfileView() }
             .task { await account.refresh(); await account.syncLibrary() }
         }
-        .environment(\.colorScheme, .dark)
     }
 
     private func profile(_ u: HuskUser) -> some View {
@@ -259,7 +133,7 @@ struct SignInView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
-                HuskLogo(size: 64).padding(.top, 24)
+                HuskMark(size: 72).padding(.top, 24)
                 Text(creating ? "Create a Husk Account" : "Sign In to Husk")
                     .font(.system(size: 26, weight: .bold)).foregroundStyle(Console.text)
                 Text("Your profile, playtime and achievements, on this iPhone and on antiweb.lol.")

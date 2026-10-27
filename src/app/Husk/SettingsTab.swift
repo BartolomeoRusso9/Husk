@@ -6,12 +6,18 @@ import SwiftUI
 struct SettingsTab: View {
     @AppStorage(AppWindows.defaultKey) private var multitask = false
     @AppStorage(CompatibilityStore.askKey) private var askCompat = true
+    @ObservedObject private var account = Account.shared
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    NavigationLink { AboutSettings() } label: { appCard }
+                    Button { Router.shared.showProfile = true } label: { accountCard }
+                        .foregroundStyle(.primary)
+                } footer: {
+                    if !account.signedIn {
+                        Text("A Husk account keeps your profile, playtime and achievements, here and on antiweb.lol.")
+                    }
                 }
 
                 Section {
@@ -29,6 +35,7 @@ struct SettingsTab: View {
                     row(AppearanceSettings(), "paintbrush.fill", .pink, "Appearance", "Light or dark, accent colour, app icon")
                     row(FontSettings(), "textformat", .indigo, "Fonts", "Chinese, Japanese and Korean text")
                     row(FAQTab(), "questionmark.circle.fill", .teal, "Help", "Answers to common problems")
+                    row(AboutSettings(), "info.circle.fill", .gray, "About Husk", "Version \(Bundle.main.version) · \(Bundle.main.commit)")
                 }
 
                 Section {
@@ -101,17 +108,30 @@ struct SettingsTab: View {
         }
     }
 
-    private var appCard: some View {
+    /// The top of Settings, as iOS puts the Apple Account there: the Husk account (or the way to sign in), and which Husk this is.
+    private var accountCard: some View {
         HStack(spacing: 14) {
-            HuskMark(size: 56)
+            ZStack(alignment: .bottomTrailing) {
+                if account.signedIn { AccountAvatar(size: 60) } else { HuskMark(size: 60) }
+            }
             VStack(alignment: .leading, spacing: 2) {
-                Text("Husk").font(.title3.weight(.semibold))
-                Text("Version \(Bundle.main.version) · \(Bundle.main.commit)")
+                Text(account.signedIn ? (account.user?.displayName ?? "Husk Account") : "Sign In")
+                    .font(.title3.weight(.semibold))
+                Text(account.signedIn ? "@" + (account.user?.username ?? "") : "Profile, playtime and achievements")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text("Husk \(Bundle.main.version) · \(Bundle.main.commit)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 
     private func row<D: View>(_ destination: D, _ icon: String, _ tint: Color,

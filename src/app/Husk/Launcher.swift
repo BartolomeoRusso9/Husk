@@ -528,14 +528,29 @@ private struct HomeMoreButton: View {
     }
 }
 
-/// The avatar in Home's corner: the side menu. Its dot is JIT: green on, orange off.
+/// The avatar in Home's corner: the account, adding things, Downloads, Files, JIT and Settings. Its dot is JIT: green on, orange off.
 private struct HomeAvatar: View {
     @ObservedObject private var router = Router.shared
     @ObservedObject private var jit = JITCoordinator.shared
     @ObservedObject private var account = Account.shared
 
     var body: some View {
-        Button { router.showSideMenu = true } label: {
+        Menu {
+            Button { router.showProfile = true } label: {
+                if let u = account.user, account.signedIn { Label(u.displayName, systemImage: "person.crop.circle") }
+                else { Label("Sign In", systemImage: "person.crop.circle.badge.plus") }
+            }
+            Divider()
+            Button { router.showImport = true } label: { Label("Import APK", systemImage: "square.and.arrow.down") }
+            Button { router.showDownloads = true } label: { Label("Downloads", systemImage: "arrow.down.circle") }
+            Button { router.showFiles = true } label: { Label("Files", systemImage: "folder") }
+            Divider()
+            Button { JITNotice.toggle(jit) } label: {
+                Label(Launcher.jitOn ? "JIT On (\(JITNotice.via(jit)))" : "Turn On JIT", systemImage: "bolt.fill")
+            }
+            .disabled(jit.busy)
+            Button { router.tab = .settings } label: { Label("Settings", systemImage: "gearshape") }
+        } label: {
             ZStack(alignment: .topTrailing) {
                 AccountAvatar(size: 36)
                 Circle()
@@ -545,7 +560,6 @@ private struct HomeAvatar: View {
                     .offset(x: 1, y: -1)
             }
         }
-        .buttonStyle(.plain)
         .accessibilityLabel("Menu")
         .accessibilityValue(Launcher.jitOn ? "JIT on" : "JIT off")
     }

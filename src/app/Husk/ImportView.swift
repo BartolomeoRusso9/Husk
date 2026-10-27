@@ -50,7 +50,6 @@ struct ImportView: View {
                 Text("A direct link to an APK, a bundle or a zip. It shows in Downloads, then Husk asks where it goes.")
             }
         }
-        .environment(\.colorScheme, .dark)
     }
 
     private var dropZone: some View {

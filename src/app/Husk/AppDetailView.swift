@@ -29,8 +29,6 @@ enum LibraryRoute: Hashable {
     @Published var platform: PlatformFilter = .all
     /// Downloads, as a sheet: Home's Downloads tile opens it.
     @Published var showDownloads = false
-    /// The side menu (the avatar on Home): profile, places, quick actions.
-    @Published var showSideMenu = false
     /// The Husk account's profile page.
     @Published var showProfile = false
     /// Import APK: pick a file, or get one from a link or the Store.

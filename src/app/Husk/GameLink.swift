@@ -8,7 +8,6 @@ import Foundation
         let id = url.lastPathComponent
         guard !id.isEmpty, id != "/" else { return true }
         let router = Router.shared
-        router.showSideMenu = false
         if let item = Launcher.items(store: TranslationLayerStore.shared, host: AndroidHost.shared).first(where: { $0.accountID == id }) {
             router.tab = .home
             router.home = [item.route]
