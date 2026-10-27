@@ -2,7 +2,7 @@
 import SwiftUI
 import UIKit
 
-/// Husk's compatibility list (antiweb.lol): how each app runs for everyone, next to how it ran on this iPhone (GameStatus).
+/// Husk's compatibility list (itslevii.dev): how each app runs for everyone, next to how it ran on this iPhone (GameStatus).
 ///
 /// The list is fetched now and then and kept on disk, so it shows offline and costs nothing at launch. Reports go to the
 /// same site: how a game ran, sent from Husk with the device, iOS, build and JIT method filled in.
@@ -10,11 +10,12 @@ import UIKit
 final class CompatibilityStore: ObservableObject {
     static let shared = CompatibilityStore()
 
-    /// The site, then its Render address for when the domain does not answer. A different one can be put first for testing
+    /// The site, then the old address for when it does not answer. A different one can be put first for testing
     /// (defaults write com.husk.app husk.compatURL http://…).
     static var sites: [URL] {
         let custom = UserDefaults.standard.string(forKey: "husk.compatURL").flatMap(URL.init(string:))
-        return [custom, URL(string: "https://antiweb.lol"), URL(string: "https://antiweb-website.onrender.com")].compactMap { $0 }
+        // itslevii.dev (one Cloudflare Worker: the site and /api); the old antiweb.lol while the move settles
+        return [custom, URL(string: "https://itslevii.dev"), URL(string: "https://antiweb.lol")].compactMap { $0 }
     }
     /// The one that answered last, for links.
     static var site: URL { shared.workingSite ?? sites[0] }
@@ -251,7 +252,7 @@ struct CompatibilitySection: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Button { reporting = subject } label: { Label("Report How It Ran", systemImage: "square.and.pencil") }
-            Link(destination: compat.pageURL(subject.package)) { Label("Open on antiweb.lol", systemImage: "safari") }
+            Link(destination: compat.pageURL(subject.package)) { Label("Open on itslevii.dev", systemImage: "safari") }
         } header: {
             Text("Compatibility")
         } footer: {
@@ -304,7 +305,7 @@ struct CompatReportSheet: View {
                 } header: {
                     Text("Your Name")
                 } footer: {
-                    Text("Sent with it: \(CompatibilityStore.device), iOS \(UIDevice.current.systemVersion), Husk build \(CompatibilityStore.build), JIT from \(CompatibilityStore.jitMethod). It shows on antiweb.lol for everyone.")
+                    Text("Sent with it: \(CompatibilityStore.device), iOS \(UIDevice.current.systemVersion), Husk build \(CompatibilityStore.build), JIT from \(CompatibilityStore.jitMethod). It shows on itslevii.dev for everyone.")
                 }
                 Section {
                     Toggle("Attach my log", isOn: $attachLog)

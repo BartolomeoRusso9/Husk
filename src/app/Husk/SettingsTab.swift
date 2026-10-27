@@ -16,7 +16,7 @@ struct SettingsTab: View {
                         .foregroundStyle(.primary)
                 } footer: {
                     if !account.signedIn {
-                        Text("A Husk account keeps your profile, playtime and achievements, here and on antiweb.lol.")
+                        Text("A Husk account keeps your profile, playtime and achievements, here and on itslevii.dev.")
                     }
                 }
 
@@ -87,7 +87,7 @@ struct SettingsTab: View {
                 } header: {
                     Text("Compatibility")
                 } footer: {
-                    Text("Game pages and the Store show how each app runs for everyone, from antiweb.lol. Your reports go there "
+                    Text("Game pages and the Store show how each app runs for everyone, from itslevii.dev. Your reports go there "
                        + "with your device, iOS version, Husk build and JIT method.")
                 }
 

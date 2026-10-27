@@ -136,7 +136,7 @@ struct SignInView: View {
                 HuskMark(size: 72).padding(.top, 24)
                 Text(creating ? "Create a Husk Account" : "Sign In to Husk")
                     .font(.system(size: 26, weight: .bold)).foregroundStyle(Console.text)
-                Text("Your profile, playtime and achievements, on this iPhone and on antiweb.lol.")
+                Text("Your profile, playtime and achievements, on this iPhone and on itslevii.dev.")
                     .font(.subheadline).foregroundStyle(Console.textDim).multilineTextAlignment(.center)
                 VStack(spacing: 10) {
                     field("Username", text: $username)

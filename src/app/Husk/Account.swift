@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// A Husk account on the website (antiweb.lol): sign in, the profile (avatar, name, @handle, games, apps, playtime, recently
+// A Husk account on the website (itslevii.dev): sign in, the profile (avatar, name, @handle, games, apps, playtime, recently
 // played, achievements), and the library it shows, sent from here. The session token lives in the Keychain.
 import Foundation
 import Security
