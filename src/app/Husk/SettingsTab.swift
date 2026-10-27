@@ -157,14 +157,14 @@ struct SettingsTab: View {
 }
 
 /// A Form, as the system draws one.
-private struct HuskForm: ViewModifier {
+private struct HuskFormStyle: ViewModifier {
     func body(content: Content) -> some View {
         content.navigationBarTitleDisplayMode(.inline)
     }
 }
 
 extension View {
-    func huskForm() -> some View { modifier(HuskForm()) }
+    func huskForm() -> some View { modifier(HuskFormStyle()) }
 }
 
 // MARK: - Library
