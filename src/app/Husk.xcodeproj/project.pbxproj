@@ -45,12 +45,14 @@
 		22363DC2D857FB5CE998FAF1 /* PlayStoreManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0384223FE1CD6D8C7C3A22A0 /* PlayStoreManager.swift */; };
 		22C6845CB351341738D8B027 /* WhatsNew.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAB8BAA1A1D0AB19EBD6F784 /* WhatsNew.swift */; };
 		2382523F24A95C0E58189C78 /* husk-tl-bionic-cxx.c in Sources */ = {isa = PBXBuildFile; fileRef = 44BAD09F39FA4184F97AB0D0 /* husk-tl-bionic-cxx.c */; };
+		23DB83A6F0FE77417BAF5BBB /* PlayText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53FCFD712C021AB82D0FAF94 /* PlayText.swift */; };
 		240D4917EC7FC510B753EB4E /* husk-tl-jni-cocos.c in Sources */ = {isa = PBXBuildFile; fileRef = B76CE6F39722749AA0027959 /* husk-tl-jni-cocos.c */; };
 		2472A0B862A3BC5106DBAEBC /* husk-tl-load.c in Sources */ = {isa = PBXBuildFile; fileRef = 5BE31DC5ACA28C0133F828FA /* husk-tl-load.c */; };
 		282161AFBA4181334903B6B6 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 8CB6A26EF28408473A506DD9 /* InfoPlist.strings */; };
 		29B4497EDC1E890D82BDF969 /* GuestManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0490485F9BA884A0554EAD /* GuestManifest.swift */; };
 		29CF21D2D0395FE19CC8D95D /* Holiday.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB613D9704124AC887763433 /* Holiday.swift */; };
 		2A3E4ED499EAA7EDDFCB3EE2 /* husk-tl-bionic-ldbl.c in Sources */ = {isa = PBXBuildFile; fileRef = 39B1A738A583D4E01CB15C60 /* husk-tl-bionic-ldbl.c */; };
+		2A6B18C69B05A6690F52FA37 /* PlayAppPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0852F7CD47F281A5055682 /* PlayAppPage.swift */; };
 		2A70738EC7BE5ABEA7509E8B /* husk-tl-blit.c in Sources */ = {isa = PBXBuildFile; fileRef = CB3F6E9B90C81C37AAABE363 /* husk-tl-blit.c */; };
 		2B545A13904F3C3CA391F5E5 /* FAQTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BF5756DFAA31BA30063664B /* FAQTab.swift */; };
 		2BB97B7AE3D1994ABB4A67A0 /* MassTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2470C9D4EBE84F890D35A354 /* MassTest.swift */; };
@@ -275,6 +277,7 @@
 		182A386166343D705B52A7BF /* husk-tl-godot.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-godot.c"; sourceTree = "<group>"; };
 		198FA3419B26F852A2B05ED9 /* HuskJITMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskJITMessages.swift; sourceTree = "<group>"; };
 		1A03EC803ECECBFCA11026AF /* husk-tl-jni-tls.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-jni-tls.c"; sourceTree = "<group>"; };
+		1A0852F7CD47F281A5055682 /* PlayAppPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayAppPage.swift; sourceTree = "<group>"; };
 		1B29247002CE43A3B9DEC633 /* libqemu-aarch64-softmmu.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = "libqemu-aarch64-softmmu.dylib"; path = "../../build/ios-arm64/lib/libqemu-aarch64-softmmu.dylib"; sourceTree = "<group>"; };
 		1C045A42AF1AB4965370A87F /* husk-tl-bionic.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-bionic.h"; sourceTree = "<group>"; };
 		1C1FC868194AB42F653D94F9 /* HuskJITHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskJITHelper.swift; sourceTree = "<group>"; };
@@ -342,6 +345,7 @@
 		4D54C1E4F20A020AC62C9419 /* husk-tl-ld.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-ld.c"; sourceTree = "<group>"; };
 		505B834A46F5AA7C2BBE8526 /* husk-tl-res.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-res.h"; sourceTree = "<group>"; };
 		5236C5746D2CDE06C5D438BB /* HuskAppIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskAppIcon.swift; sourceTree = "<group>"; };
+		53FCFD712C021AB82D0FAF94 /* PlayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayText.swift; sourceTree = "<group>"; };
 		54E1C79EFAAEBBC6992A36A6 /* husk-tl-jni-hle.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-jni-hle.c"; sourceTree = "<group>"; };
 		555112D0E3895EBE37A68FEB /* icon-default.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-default.png"; sourceTree = "<group>"; };
 		5664FE015975D16E7500F3C7 /* JITBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JITBootstrap.swift; sourceTree = "<group>"; };
@@ -788,8 +792,10 @@
 			children = (
 				92BB8B6B5EA2FAE7198451C0 /* GoogleSignInSheet.swift */,
 				A3F0F48E2692FC022D05BDDE /* PlayAPI.swift */,
+				1A0852F7CD47F281A5055682 /* PlayAppPage.swift */,
 				036699CBF5693E75237EF112 /* PlayDevice.swift */,
 				0384223FE1CD6D8C7C3A22A0 /* PlayStoreManager.swift */,
+				53FCFD712C021AB82D0FAF94 /* PlayText.swift */,
 				96F492FB5CD1D4A0B2D79E12 /* Protobuf.swift */,
 				685DEBAD91D2650A85E7BA19 /* StoreView.swift */,
 			);
@@ -1147,8 +1153,10 @@
 				507B1DFCAE18CC582B503084 /* PS4Screen.swift in Sources */,
 				F1E2ED25F28A24BA7197C5DB /* PipeShim.c in Sources */,
 				010359771DB45AA97E28E3DC /* PlayAPI.swift in Sources */,
+				2A6B18C69B05A6690F52FA37 /* PlayAppPage.swift in Sources */,
 				48B7AF4FFC377766FF6158A4 /* PlayDevice.swift in Sources */,
 				22363DC2D857FB5CE998FAF1 /* PlayStoreManager.swift in Sources */,
+				23DB83A6F0FE77417BAF5BBB /* PlayText.swift in Sources */,
 				0594292F9939C73B1FFFF0F4 /* ProfileView.swift in Sources */,
 				4C11B3EFED23B912383D12E2 /* Protobuf.swift in Sources */,
 				5E4B0292717DAE8B0CAA99E4 /* QemuRunner.swift in Sources */,
