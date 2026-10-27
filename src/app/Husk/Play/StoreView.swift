@@ -248,7 +248,7 @@ struct StoreView: View {
         Button { selectedApp = app } label: {
             ZStack(alignment: .bottomLeading) {
                 Console.card
-                AsyncImage(url: URL(string: app.screenshotURLs.first ?? app.iconURL ?? "")) { phase in
+                AsyncImage(url: URL(string: app.feature ?? app.screenshotURLs.first ?? app.iconURL ?? "")) { phase in
                     if let image = phase.image { image.resizable().scaledToFill() } else { Console.card }
                 }
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .leading, endPoint: .trailing)
@@ -405,15 +405,19 @@ struct StoreView: View {
 
                         if let status = compat.entry(app.id)?.status { CompatBadge(status: status) }
 
-                        if app.rating > 0 {
+                        if app.rating > 0 || !app.installs.isEmpty {
                             HStack(spacing: 3) {
-                                Image(systemName: "star.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.yellow)
-                                Text(String(format: "%.1f", app.rating))
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(Theme.textDim)
+                                if app.rating > 0 {
+                                    Image(systemName: "star.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.yellow)
+                                    Text(String(format: "%.1f", app.rating))
+                                }
+                                if app.rating > 0 && !app.installs.isEmpty { Text("·") }
+                                if !app.installs.isEmpty { Text(app.installs) }
                             }
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(Theme.textDim)
                         }
                     }
                 }
@@ -462,161 +466,6 @@ struct StoreView: View {
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.capsule)
             }
-        }
-    }
-}
-
-// MARK: - App Detail Sheet
-
-struct PlayAppDetailSheet: View {
-    let app: PlayAPI.PlayApp
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var compat = CompatibilityStore.shared
-    @ObservedObject private var manager = PlayStoreManager.shared
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Header: Icon, Title, Developer, Get Button
-                    HStack(spacing: 16) {
-                        AsyncImage(url: URL(string: app.iconURL ?? "")) { phase in
-                            if let image = phase.image {
-                                image.resizable().aspectRatio(contentMode: .fit)
-                            } else {
-                                Color(uiColor: .tertiarySystemFill)
-                            }
-                        }
-                        .frame(width: 76, height: 76)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(app.title)
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(Theme.text)
-                                .lineLimit(2)
-
-                            Text(app.developer)
-                                .font(.subheadline)
-                                .foregroundStyle(Theme.textDim)
-                                .lineLimit(1)
-
-                            if let status = compat.entry(app.id)?.status { CompatBadge(status: status) }
-
-                            Spacer(minLength: 4)
-
-                            installAction
-                        }
-                    }
-
-                    Divider()
-
-                    // Metrics row
-                    HStack {
-                        metricItem(title: "Rating", value: app.rating > 0 ? String(format: "%.1f ★", app.rating) : "N/A")
-                        Spacer()
-                        metricItem(title: "Downloads", value: app.downloads.isEmpty ? "—" : app.downloads)
-                        Spacer()
-                        metricItem(title: "Version", value: app.versionString.isEmpty ? "Current" : app.versionString)
-                        if app.sizeBytes > 0 {
-                            Spacer()
-                            metricItem(title: "Size", value: ByteCountFormatter.string(fromByteCount: app.sizeBytes, countStyle: .file))
-                        }
-                    }
-                    .padding(.horizontal, 8)
-
-                    // Screenshots carousel
-                    if !app.screenshotURLs.isEmpty {
-                        Divider()
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Preview")
-                                .font(.headline)
-                                .foregroundStyle(Theme.text)
-
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 12) {
-                                    ForEach(app.screenshotURLs, id: \.self) { url in
-                                        AsyncImage(url: URL(string: url)) { phase in
-                                            if let image = phase.image {
-                                                image.resizable().aspectRatio(contentMode: .fit)
-                                            } else {
-                                                Color(uiColor: .tertiarySystemFill)
-                                            }
-                                        }
-                                        .frame(height: 220)
-                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Description
-                    if !app.summary.isEmpty {
-                        Divider()
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("About this app")
-                                .font(.headline)
-                                .foregroundStyle(Theme.text)
-
-                            Text(app.summary)
-                                .font(.body)
-                                .foregroundStyle(Theme.textDim)
-                        }
-                    }
-                }
-                .padding(20)
-            }
-            .background(Console.page.ignoresSafeArea())
-            .navigationTitle(app.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-
-    private var installAction: some View {
-        let progress = manager.downloadProgress[app.id]
-        let isDownloading = manager.installingPackages.contains(app.id)
-
-        return Group {
-            if isDownloading || progress != nil {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text(progress.map { "Downloading… \(Int($0 * 100))%" } ?? "Downloading…")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Theme.textDim)
-                    Button("Cancel", role: .destructive) { manager.cancelDownload(app.id) }
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.borderless)
-                }
-            } else {
-                Button {
-                    manager.downloadAndInstall(app: app)
-                    dismiss()
-                } label: {
-                    Text(app.isFree ? "GET" : app.formattedPrice)
-                        .font(.headline)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-            }
-        }
-    }
-
-    private func metricItem(title: String, value: String) -> some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.text)
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(Theme.textDim)
         }
     }
 }

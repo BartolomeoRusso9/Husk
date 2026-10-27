@@ -413,3 +413,25 @@
 "python3 serve-folder.py <folder>" = "python3 serve-folder.py <folder>";
 "serve-folder.py is in Husk's repository, under tools. The folder's contents land at the top of Shared Storage, so serve the folder that holds what a game expects there." = "serve-folder.py 位于 Husk 仓库的 tools 目录下。文件夹中的内容会放到“共享存储”的最顶层，所以请共享游戏期望在那里看到的文件夹。";
 "starting" = "正在启动";
+
+/* Play app page */
+"Highlights" = "亮点";
+"About this game" = "关于此游戏";
+"What's new" = "新功能";
+"Information" = "信息";
+"More" = "更多";
+"Less" = "收起";
+"Rated for" = "分级";
+"Rating" = "评分";
+"%@ reviews" = "%@ 条评价";
+"Size" = "大小";
+"Version" = "版本";
+"Developer" = "开发者";
+"Updated" = "更新日期";
+"Released" = "发布日期";
+"Ads" = "广告";
+"In-app purchases" = "应用内购买";
+"Website" = "网站";
+"Email" = "电子邮件";
+"Privacy policy" = "隐私政策";
+"View on Google Play" = "在 Google Play 上查看";
