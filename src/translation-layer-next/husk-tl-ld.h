@@ -114,16 +114,18 @@ void tl_ld_set_environment(char **argv, char **envp);
 /*
  * Ahead of time (Husk 3.2): an arm64 library mapped and patched the way the loader does it, for a Mach-O dylib that runs with no
  * executable memory made at run time. `text` is the image with every code rewrite applied, then its stub pages and its thread-block
- * page; `data` is the image as the file has it (relocated at run time), the rest zero. Both are `size` bytes, and `size` is also the
- * distance the dylib must keep from `text` to `data`. Free with tl_ld_aot_free.
+ * page: `size` bytes, which is also the distance the dylib must keep from `text` to its data copy. The data copy is the image as the
+ * file lays it out (PT_LOAD contents at their vaddrs from base_vaddr, the rest zero), relocated at run time. `text` points into a
+ * scratch region that tl_ld_aot_free releases. husk-tl-aot.h writes the dylib.
  */
 typedef struct tl_ld_aot_image {
-    uint8_t *text, *data;
+    const uint8_t *text;
     size_t size;
     uint64_t base_vaddr;               /* the vaddr at the start of the image */
     size_t npages, nstub;              /* 16 KiB pages of image and of stubs (one thread-block page follows the stubs) */
     size_t n_mixed;                    /* pages holding code and writable data (4 KiB-aligned libraries): data read at code addresses there is not relocated */
     size_t n_x18, n_x18_failed, n_svc, n_svc_far, n_adrp, n_adr, n_adr_failed, n_tpidr;
+    void *region; size_t region_size;
     char err[160];
 } tl_ld_aot_image;
 bool tl_ld_aot_build(const char *name, const uint8_t *file, size_t flen, tl_ld_aot_image *out);

@@ -2435,28 +2435,21 @@ bool tl_ld_aot_build(const char *name, const uint8_t *file, size_t flen, tl_ld_a
     }
     size_t size = (L->npages + L->nstub + 1) * PAGE;
     out->size = size; out->base_vaddr = L->base_vaddr; out->npages = L->npages; out->nstub = L->nstub;
-    out->data = calloc(1, size);
-    out->text = malloc(size);
-    if (out->data && out->text) {
-        memcpy(out->data, L->rw, L->npages * PAGE);       /* the image before any rewrite: relocated at run time, in place */
-        size_t t = 0, a = 0, ad = 0, sv = 0;
-        patch_library(L, &t, &a, &ad, &sv);
-        memcpy(out->text, L->rx, size);
-        /* The data slots and the thread block were filled through the data view, which in this build is the same memory: in the
-         * dylib they belong to __DATA (filled at run time), and in __TEXT they would only be addresses of this process. */
-        memset(out->text + L->npages * PAGE + SLOT_SVC, 0, 16);
-        memset(out->text + (L->npages + L->nstub) * PAGE, 0, PAGE);
-        if (L->isl_rx) memset(out->text + (L->isl_rx - L->rx) + SLOT_SVC, 0, 8);
-        for (size_t p = 0; p < L->npages; p++) if ((L->pflags[p] & TL_PAGE_W) && (L->pflags[p] & TL_PAGE_X)) out->n_mixed++;
-        out->n_x18 = L->n_x18; out->n_x18_failed = L->n_x18_failed; out->n_svc = sv; out->n_svc_far = L->n_svc_far;
-        out->n_adrp = a; out->n_adr = ad; out->n_tpidr = t; out->n_adr_failed = L->n_adr_failed;
-    } else snprintf(out->err, sizeof(out->err), "out of memory");
-    bool ok = out->data && out->text;
-    vm_deallocate(mach_task_self(), g_aot.base, g_aot.size);
+    size_t t = 0, a = 0, ad = 0, sv = 0;
+    patch_library(L, &t, &a, &ad, &sv);
+    /* The data slots and the thread block were filled through the data view, which in this build is the same memory: in the dylib
+     * they belong to __DATA (filled at run time), and in __TEXT they would only be addresses of this process. */
+    memset(L->rw + L->npages * PAGE + SLOT_SVC, 0, 16);
+    memset(L->rw + (L->npages + L->nstub) * PAGE, 0, PAGE);
+    if (L->isl_rw) memset(L->isl_rw + SLOT_SVC, 0, 8);
+    out->text = L->rx;
+    out->region = (void *)(uintptr_t)g_aot.base; out->region_size = g_aot.size;
+    for (size_t p = 0; p < L->npages; p++) if ((L->pflags[p] & TL_PAGE_W) && (L->pflags[p] & TL_PAGE_X)) out->n_mixed++;
+    out->n_x18 = L->n_x18; out->n_x18_failed = L->n_x18_failed; out->n_svc = sv; out->n_svc_far = L->n_svc_far;
+    out->n_adrp = a; out->n_adr = ad; out->n_tpidr = t; out->n_adr_failed = L->n_adr_failed;
     free(L->symcache); free(L->pflags); free(L->phdr); free(L->fde_start); free(L->fde_end); free(L);
     pthread_mutex_unlock(&g_big);
-    if (!ok) tl_ld_aot_free(out);
-    return ok;
+    return true;
 }
 
 uint64_t tl_aot_hash(const uint8_t *p, size_t n)
@@ -2470,6 +2463,6 @@ uint64_t tl_aot_hash(const uint8_t *p, size_t n)
 
 void tl_ld_aot_free(tl_ld_aot_image *img)
 {
-    free(img->text); free(img->data);
-    img->text = img->data = NULL;
+    if (img->region) vm_deallocate(mach_task_self(), (vm_address_t)(uintptr_t)img->region, img->region_size);
+    img->region = NULL; img->text = NULL;
 }

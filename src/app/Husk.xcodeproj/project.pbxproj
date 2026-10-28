@@ -197,6 +197,7 @@
 		F2653F32A929D8E8BCEE057E /* husk-tl-dvm-audio.c in Sources */ = {isa = PBXBuildFile; fileRef = F58D55D1773275160F4F4717 /* husk-tl-dvm-audio.c */; };
 		F3989017EF86D4BD0D4D6DDA /* Compat15.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71DD2E2A2A0B0AB86EE783DD /* Compat15.swift */; };
 		F4833815482790E167401965 /* husk-tl-ld.c in Sources */ = {isa = PBXBuildFile; fileRef = 4D54C1E4F20A020AC62C9419 /* husk-tl-ld.c */; };
+		FBDB2142ABE67A54DBF1EB31 /* husk-tl-aot.c in Sources */ = {isa = PBXBuildFile; fileRef = CD2A7D3C88E99F69E53E4E76 /* husk-tl-aot.c */; };
 		F6880CA30640F688356229CF /* HuskMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D91C1E7D6301EBCE06FEE0FE /* HuskMetalView.swift */; };
 		F6B3DA43CA16FAF920EF236D /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05B2EFC533719ED2E455C24 /* AppTheme.swift */; };
 		FA5016C04E0EFC5FD0CF32F9 /* JITCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F54A47159D39CB8039E9E44E /* JITCard.swift */; };
@@ -260,6 +261,7 @@
 /* Begin PBXFileReference section */
 		0168E1B352FFD7A4BC207CA5 /* HuskBridgeFS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskBridgeFS.swift; sourceTree = "<group>"; };
 		02BDBFFD3329C33172416AEB /* husk-tl-ld.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-ld.h"; sourceTree = "<group>"; };
+		5F967FBDCDF94F9CB26FBA0C /* husk-tl-aot.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-aot.h"; sourceTree = "<group>"; };
 		036699CBF5693E75237EF112 /* PlayDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayDevice.swift; sourceTree = "<group>"; };
 		0384223FE1CD6D8C7C3A22A0 /* PlayStoreManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayStoreManager.swift; sourceTree = "<group>"; };
 		0544BF1DEA0D119A8C350588 /* husk-console-abi.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-console-abi.h"; sourceTree = "<group>"; };
@@ -343,6 +345,7 @@
 		4BD91E5537023860BD27A855 /* WebApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebApp.swift; sourceTree = "<group>"; };
 		4D3B9FB2A68373C457706DA9 /* Husk.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Husk.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4D54C1E4F20A020AC62C9419 /* husk-tl-ld.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-ld.c"; sourceTree = "<group>"; };
+		CD2A7D3C88E99F69E53E4E76 /* husk-tl-aot.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-aot.c"; sourceTree = "<group>"; };
 		505B834A46F5AA7C2BBE8526 /* husk-tl-res.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-res.h"; sourceTree = "<group>"; };
 		5236C5746D2CDE06C5D438BB /* HuskAppIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskAppIcon.swift; sourceTree = "<group>"; };
 		53FCFD712C021AB82D0FAF94 /* PlayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayText.swift; sourceTree = "<group>"; };
@@ -766,6 +769,8 @@
 				A22242B8E3E7067D6EB2AB95 /* husk-tl-jni.c */,
 				25E6473CC71D3627AB9709D1 /* husk-tl-jni.h */,
 				4D54C1E4F20A020AC62C9419 /* husk-tl-ld.c */,
+				CD2A7D3C88E99F69E53E4E76 /* husk-tl-aot.c */,
+				5F967FBDCDF94F9CB26FBA0C /* husk-tl-aot.h */,
 				02BDBFFD3329C33172416AEB /* husk-tl-ld.h */,
 				3B72237F810FCE0EE433FA3D /* husk-tl-nativeactivity.c */,
 				B318C3E235A47EA295C46433 /* husk-tl-nativeactivity.h */,
@@ -1247,6 +1252,7 @@
 				202973AEE5786B84A31A57A5 /* husk-tl-jni.c in Sources */,
 				0FA2BBF68B30B5630789922B /* husk-tl-json.c in Sources */,
 				F4833815482790E167401965 /* husk-tl-ld.c in Sources */,
+				FBDB2142ABE67A54DBF1EB31 /* husk-tl-aot.c in Sources */,
 				2472A0B862A3BC5106DBAEBC /* husk-tl-load.c in Sources */,
 				305642B7B63D6DC85E36D091 /* husk-tl-nativeactivity.c in Sources */,
 				58F5A9CE8DC62C27EC01AD68 /* husk-tl-opensles.c in Sources */,
