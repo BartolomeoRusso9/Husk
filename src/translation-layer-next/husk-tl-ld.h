@@ -131,7 +131,7 @@ bool tl_ld_aot_build(const char *name, const uint8_t *file, size_t flen, tl_ld_a
 /* What a dylib made from a library records about it (section __TEXT,__husk_manifest), so the loader only imports a dylib that was
  * made from this exact file by a compatible loader. */
 #define TL_AOT_MAGIC   "HUSKAOT1"
-#define TL_AOT_VERSION 1u
+#define TL_AOT_VERSION 2u          /* bump whenever the rewrites change: an old dylib must not be imported */
 typedef struct tl_aot_manifest {
     char magic[8];
     uint32_t version, page;            /* TL_AOT_VERSION; 16384 */
@@ -139,6 +139,10 @@ typedef struct tl_aot_manifest {
     uint64_t base_vaddr, npages, nstub, size;   /* as tl_ld_aot_image */
 } tl_aot_manifest;
 uint64_t tl_aot_hash(const uint8_t *p, size_t n);
+
+/* Where the loader looks for <library>.dylib made ahead of time (NULL: nowhere). A matching one is used instead of mapping the
+ * library into executable memory. */
+void tl_ld_set_aot_dir(const char *dir);
 void tl_ld_aot_free(tl_ld_aot_image *img);
 
 #ifdef __cplusplus
