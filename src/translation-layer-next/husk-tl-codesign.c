@@ -362,6 +362,21 @@ static const uint8_t sha256_alg_null[] = {
       0x05, 0x00
 };
 
+/*
+ * Issuer certificates to carry beside the developer certificate, for when the .p12 has none (a store's export holds only the
+ * developer certificate and its key): set by husk_codesign_chain_from_executable from the certificates in the app's own signature,
+ * which the store signed with this same certificate and its full chain.
+ */
+#define CHAIN_MAX 4
+static struct { uint8_t *der; size_t len; } g_chain[CHAIN_MAX];
+static int g_nchain;
+
+static bool chain_has(const uint8_t *der, size_t len)
+{
+    for (int i = 0; i < g_nchain; i++) if (g_chain[i].len == len && !memcmp(g_chain[i].der, der, len)) return true;
+    return false;
+}
+
 static bool build_cms_signed_data(const uint8_t *cdhash, size_t cdhash_len,
                                   const uint8_t *leaf_cert_der, size_t leaf_cert_len,
                                   const cert_meta *meta,
@@ -548,14 +563,18 @@ static bool build_cms_signed_data(const uint8_t *cdhash, size_t cdhash_len,
             SecCertificateRef c = (SecCertificateRef)CFArrayGetValueAtIndex(extra_certs, i);
             CFDataRef cd = SecCertificateCopyData(c);
             if (cd) {
-                if (CFDataGetLength(cd) != leaf_cert_len ||
-                    memcmp(CFDataGetBytePtr(cd), leaf_cert_der, leaf_cert_len) != 0) {
+                if ((CFDataGetLength(cd) != leaf_cert_len ||
+                     memcmp(CFDataGetBytePtr(cd), leaf_cert_der, leaf_cert_len) != 0)
+                    && !chain_has(CFDataGetBytePtr(cd), (size_t)CFDataGetLength(cd))) {
                     buf_put(&sdata, CFDataGetBytePtr(cd), CFDataGetLength(cd));
                 }
                 CFRelease(cd);
             }
         }
     }
+    for (int i = 0; i < g_nchain; i++)
+        if (g_chain[i].len != leaf_cert_len || memcmp(g_chain[i].der, leaf_cert_der, leaf_cert_len) != 0)
+            buf_put(&sdata, g_chain[i].der, g_chain[i].len);
     der_wrap(&sdata, 0xa0, certs_start);
 
     /* Append signerInfos SET OF */
@@ -1181,4 +1200,100 @@ bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, c
     }
 
     return true;
+}
+
+/* ------------------------------------------------------------ the app's own chain */
+
+static uint32_t rd_be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
+
+/* One BER element at p (within end): its tag, where its contents start and how long they are. Apple's signatures use indefinite
+ * lengths (0x80 ... 00 00) for the outer structures, so an indefinite element's length is found by walking its children. */
+static bool der_next(const uint8_t *p, const uint8_t *end, uint8_t *tag, const uint8_t **val, size_t *vlen)
+{
+    if (end - p < 2) return false;
+    *tag = p[0];
+    size_t n = p[1], h = 2;
+    if (n == 0x80) {                                   /* indefinite: children until the 00 00 end marker */
+        const uint8_t *c = p + 2;
+        while (end - c >= 2 && !(c[0] == 0 && c[1] == 0)) {
+            uint8_t t; const uint8_t *cv; size_t cn;
+            if (!der_next(c, end, &t, &cv, &cn)) return false;
+            c = cv + cn + (c[1] == 0x80 ? 2 : 0);     /* past the child (and its own end marker) */
+        }
+        if (end - c < 2) return false;
+        *val = p + 2; *vlen = (size_t)(c - (p + 2));
+        return true;
+    }
+    if (n & 0x80) {
+        size_t k = n & 0x7f;
+        if (k == 0 || k > 4 || (size_t)(end - p) < 2 + k) return false;
+        n = 0;
+        for (size_t i = 0; i < k; i++) n = n << 8 | p[2 + i];
+        h += k;
+    }
+    if ((size_t)(end - p) < h + n) return false;
+    *val = p + h; *vlen = n;
+    return true;
+}
+
+/* The end of the element whose contents are v..v+n (an indefinite one also has its 00 00 marker) */
+static const uint8_t *der_after(const uint8_t *elem, const uint8_t *v, size_t n) { return v + n + (elem[1] == 0x80 ? 2 : 0); }
+
+int husk_codesign_chain_from_executable(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    uint8_t hdr[32];
+    int found = 0;
+    uint32_t dataoff = 0, datasize = 0;
+    if (fread(hdr, 1, sizeof(hdr), f) == sizeof(hdr) && *(uint32_t *)hdr == 0xfeedfacfu) {   /* a thin 64-bit Mach-O */
+        uint32_t ncmds = *(uint32_t *)(hdr + 16), sizeofcmds = *(uint32_t *)(hdr + 20);
+        uint8_t *cmds = malloc(sizeofcmds);
+        if (cmds && fread(cmds, 1, sizeofcmds, f) == sizeofcmds) {
+            for (uint32_t i = 0, at = 0; i < ncmds && at + 8 <= sizeofcmds; i++) {
+                uint32_t cmd = *(uint32_t *)(cmds + at), size = *(uint32_t *)(cmds + at + 4);
+                if (cmd == 0x1d && at + 16 <= sizeofcmds) { dataoff = *(uint32_t *)(cmds + at + 8); datasize = *(uint32_t *)(cmds + at + 12); }
+                if (size < 8) break;
+                at += size;
+            }
+        }
+        free(cmds);
+    }
+    uint8_t *sig = datasize && datasize < (16u << 20) ? malloc(datasize) : NULL;
+    if (sig && fseek(f, dataoff, SEEK_SET) == 0 && fread(sig, 1, datasize, f) == datasize && rd_be32(sig) == 0xfade0cc0u) {
+        uint32_t count = rd_be32(sig + 8);
+        for (uint32_t i = 0; i < count && 12 + 8 * (size_t)(i + 1) <= datasize; i++) {
+            uint32_t type = rd_be32(sig + 12 + 8 * i), off = rd_be32(sig + 16 + 8 * i);
+            if (type != 0x10000 || (size_t)off + 8 > datasize || rd_be32(sig + off) != 0xfade0b01u) continue;
+            uint32_t blen = rd_be32(sig + off + 4);
+            if (blen < 8 || (size_t)off + blen > datasize) continue;
+            /* ContentInfo { contentType, [0] { SignedData { version, digestAlgorithms, encapContentInfo, [0] certificates ... } } } */
+            const uint8_t *p = sig + off + 8, *end = sig + off + blen, *v; size_t n; uint8_t tag;
+            if (!der_next(p, end, &tag, &v, &n) || tag != 0x30) continue;            /* ContentInfo */
+            const uint8_t *q = v, *qe = v + n;
+            if (!der_next(q, qe, &tag, &v, &n) || tag != 0x06) continue;             /* contentType */
+            q = der_after(q, v, n);
+            if (!der_next(q, qe, &tag, &v, &n) || tag != 0xa0) continue;             /* [0] */
+            if (!der_next(v, v + n, &tag, &v, &n) || tag != 0x30) continue;          /* SignedData */
+            q = v; qe = v + n;
+            for (int field = 0; q < qe && der_next(q, qe, &tag, &v, &n); field++, q = der_after(q, v, n)) {
+                if (tag != 0xa0 || field < 3) continue;                                 /* [0] certificates, after the first three */
+                for (const uint8_t *c = v, *ce = v + n; c < ce; ) {
+                    const uint8_t *cv; size_t cn;
+                    if (!der_next(c, ce, &tag, &cv, &cn)) break;
+                    size_t whole = (size_t)(der_after(c, cv, cn) - c);
+                    if (tag == 0x30 && g_nchain < CHAIN_MAX && !chain_has(c, whole) && (g_chain[g_nchain].der = malloc(whole))) {
+                        memcpy(g_chain[g_nchain].der, c, whole);
+                        g_chain[g_nchain++].len = whole;
+                        found++;
+                    }
+                    c = der_after(c, cv, cn);
+                }
+                break;
+            }
+        }
+    }
+    free(sig);
+    fclose(f);
+    return found;
 }

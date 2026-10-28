@@ -65,6 +65,13 @@ bool husk_p12_info(const uint8_t *p12, size_t p12_len, const char *password,
 bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, const char *password,
                          char *err, size_t errlen);
 
+/*
+ * Take the certificates from the code signature of the executable at `path` (the app itself: its installer signed it with the
+ * developer certificate and the chain above it) and carry them in every signature made after this, beside the developer
+ * certificate, so iOS can trust it when the .p12 holds the developer certificate alone. Returns how many were found.
+ */
+int husk_codesign_chain_from_executable(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

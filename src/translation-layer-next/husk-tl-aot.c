@@ -181,9 +181,19 @@ int husk_aot_prepare(const char *const *apks, int napks, const char *cache_dir, 
     tl_zip *z = calloc((size_t)(napks > 0 ? napks : 1), sizeof(tl_zip));
     if (!z) { snprintf(err, errlen, "out of memory"); return -1; }
     /* the libraries, by name, from the first APK that has each */
-    typedef struct { int apk; const tl_zip_entry *e; const char *name; } lib;
+    typedef struct { int apk; const tl_zip_entry *e; const char *name; } lib;   /* e NULL: apks[apk] is the library file itself */
     lib *libs = NULL; int nlibs = 0, cap = 0, ready = -1;
     for (int a = 0; a < napks; a++) {
+        size_t al = strlen(apks[a]);
+        if (al > 3 && !strcmp(apks[a] + al - 3, ".so")) {   /* a library file (the Java runtime's, from the app) */
+            const char *slash = strrchr(apks[a], '/'), *base = slash ? slash + 1 : apks[a];
+            bool seen = false;
+            for (int k = 0; k < nlibs && !seen; k++) seen = !strcmp(libs[k].name, base);
+            if (seen) continue;
+            if (nlibs == cap) { cap = cap ? cap * 2 : 16; lib *nl = realloc(libs, (size_t)cap * sizeof(lib)); if (!nl) { snprintf(err, errlen, "out of memory"); goto out; } libs = nl; }
+            libs[nlibs++] = (lib){ a, NULL, base };
+            continue;
+        }
         char zerr[160] = "";
         if (!tl_zip_open(&z[a], apks[a], zerr, sizeof(zerr))) { tl_log_line("aot: %s: %s", apks[a], zerr); continue; }
         for (size_t i = 0; i < z[a].count; i++) {
@@ -202,7 +212,15 @@ int husk_aot_prepare(const char *const *apks, int napks, const char *cache_dir, 
     for (int k = 0; k < nlibs; k++) {
         if (progress) progress(user, k, nlibs, libs[k].name);
         const uint8_t *data; size_t len; bool owned = false; char zerr[160] = "";
-        if (!tl_zip_data(&z[libs[k].apk], libs[k].e, (size_t)1 << 31, &data, &len, &owned, zerr, sizeof(zerr))) {
+        if (!libs[k].e) {
+            FILE *f = fopen(apks[libs[k].apk], "rb");
+            uint8_t *b = NULL; long n = -1;
+            if (f && fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 && (b = malloc((size_t)n))
+                && fread(b, 1, (size_t)n, f) == (size_t)n) { data = b; len = (size_t)n; owned = true; }
+            else { free(b); b = NULL; }
+            if (f) fclose(f);
+            if (!b) { snprintf(err, errlen, "%s: %s", libs[k].name, strerror(errno)); ready = -1; goto out; }
+        } else if (!tl_zip_data(&z[libs[k].apk], libs[k].e, (size_t)1 << 31, &data, &len, &owned, zerr, sizeof(zerr))) {
             snprintf(err, errlen, "%s: %s", libs[k].name, zerr); ready = -1; goto out;
         }
         char path[1200], signer[1220], tag[256] = "";

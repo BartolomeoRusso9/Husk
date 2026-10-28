@@ -47,8 +47,27 @@ enum JITLess {
 
     /// Before a game's JIT-less start: its libraries converted and signed (once; again only when the certificate changes). With no
     /// certificate imported, only prebuilt dylibs can be used, and this does nothing.
+    /// The Java runtime's own native libraries (libjavacore, libopenjdk, ICU, conscrypt...), which apps on Husk's Java runtime load
+    /// from the app bundle: converted on the device like a game's, once.
+    static var runtimeLibraries: [String] {
+        guard let root = Bundle.main.resourcePath.map({ $0 + "/java-runtime" }),
+              let e = FileManager.default.enumerator(atPath: root) else { return [] }
+        return e.compactMap { $0 as? String }.filter { $0.hasSuffix(".so") }.map { root + "/" + $0 }
+    }
+
+    private static var chainLoaded = false
+
     static func prepare(apks: [String], progress: @escaping @Sendable (String) -> Void) async throws {
         guard enabled, let cred = SigningCertificate.credentials() else { return }
+        let apks = apks + runtimeLibraries
+        // The certificates above the developer certificate, for iOS to trust the signatures: from Husk's own signature, which the
+        // store made with the same certificate and its whole chain (a store's .p12 holds the developer certificate alone).
+        if !chainLoaded, let exe = Bundle.main.executablePath {
+            chainLoaded = true
+            HuskLog.log("sign", "certificate chain from Husk's own signature: \(husk_codesign_chain_from_executable(exe)) certificates")
+        }
+        // The signer revision is part of the tag: libraries signed by an older signer are signed again
+        let tag = cred.tag + "-s2"
         let dir = cacheDirectory.path
         try await Task.detached(priority: .userInitiated) {
             final class Box { let report: (String) -> Void; init(_ r: @escaping (String) -> Void) { report = r } }
@@ -63,7 +82,7 @@ enum JITLess {
                 paths.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: paths.count) { list in
                     cred.p12.withUnsafeBytes { p12 in
                         husk_aot_prepare(list, Int32(paths.count), dir, p12.bindMemory(to: UInt8.self).baseAddress, p12.count,
-                                         cred.password, cred.tag, { user, index, total, lib in
+                                         cred.password, tag, { user, index, total, lib in
                                              guard let user, let lib else { return }
                                              let box = Unmanaged<Box>.fromOpaque(user).takeUnretainedValue()
                                              box.report("Preparing \(String(cString: lib)) (\(index + 1) of \(total))")

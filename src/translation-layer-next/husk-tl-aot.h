@@ -42,6 +42,7 @@ bool tl_aot_make_dylib(const char *name, const uint8_t *file, size_t flen, const
  * as the loader's search does) as a dylib in cache_dir, aot-<hash>-<library>.dylib, signed with the developer certificate in p12
  * (husk-tl-codesign.h). A dylib already there is only signed again when cert_tag (any string naming the certificate) differs from
  * the one it was signed with, which is kept beside it in <dylib>.signer. progress (optional) is called before each library.
+ * An entry of apks ending in .so is a library file itself (the Java runtime's own natives).
  * Returns how many libraries are ready, or -1 with a reason in err.
  */
 typedef void (*tl_aot_progress_fn)(void *user, int index, int total, const char *library);
