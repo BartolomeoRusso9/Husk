@@ -5,6 +5,10 @@
 # screenshot is not black, and it looks like ref/<name>.png. --update makes the screenshots the new references (look at
 # them first). Output goes to $HUSK_REGRESS_OUT (default /tmp/husk-regress): the screenshots, each game's log and a
 # summary. Takes a few minutes; Minecraft is most of it.
+#
+# HUSK_REGRESS_JITLESS=1: Husk 3.2's JIT-less mode. Each game's libraries (and the Java runtime's) are converted into dylibs first
+# (elf2macho-test --prepare, cached in $CACHE/aot), and the game runs from them with no executable memory at all (TL_NO_XMEM=1).
+# HUSK_REGRESS_NO_ALIAS=1 also leaves out the step iOS refuses (sharing data pages with the code view), as on a phone.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; R="$(cd "$HERE/../.." && pwd)"
 OUT="${HUSK_REGRESS_OUT:-/tmp/husk-regress}"; CACHE="${HUSK_REGRESS_CACHE:-$HOME/Library/Caches/husk-regress}"
@@ -42,11 +46,25 @@ while IFS='|' read -r name harness apk secs size env expect; do
         BUILT="$BUILT$harness "
     fi
 
+    jitless=""
+    if [ "${HUSK_REGRESS_JITLESS:-0}" = 1 ]; then
+        if [[ "$BUILT" != *" elf2macho-test "* ]]; then
+            bash "$HERE/build.sh" tools/elf2macho-test.c "$OUT/elf2macho-test" > "$OUT/build-elf2macho-test.log" 2>&1 || { echo "elf2macho-test did not build"; exit 1; }
+            BUILT="${BUILT}elf2macho-test "
+        fi
+        splits=$(echo " $(expand "$env") " | sed -n 's/.* TL_SPLITS=\([^ ]*\) .*/\1/p' | tr ':' ' ')
+        if ! "$OUT/elf2macho-test" --prepare "$CACHE/aot" "$apk" $splits $(find "$R/build/java-runtime" -name '*.so' 2>/dev/null) > "$OUT/$name.prepare.log" 2>&1; then
+            printf "%-15s %-8s %s\n" "$name" "FAILED" "preparing dylibs failed ($name.prepare.log)" | tee -a "$OUT/summary.txt"
+            fails=$((fails + 1)); continue
+        fi
+        jitless="TL_NO_XMEM=1 TL_AOT_DIR=$CACHE/aot"
+        [ "${HUSK_REGRESS_NO_ALIAS:-0}" = 1 ] && jitless="$jitless TL_AOT_NO_ALIAS=1"
+    fi
     shot="$OUT/$name.png"; log="$OUT/$name.log"; ctl="$OUT/$name.ctl"; rm -f "$shot"
     printf "wait %d\nshot %s\nquit\n" $((secs * 1000)) "$shot" > "$ctl"
     data=$(mktemp -d /tmp/husk-regress-data.XXXXXX)
     pkill -9 -x "$harness" 2>/dev/null
-    ( cd "$OUT" && env TL_AUDIO_MUTE=1 TL_JNI_TRACE=0 TL_VERBOSE=0 TL_CTL="$ctl" TL_DATA="$data" $(expand "$env") \
+    ( cd "$OUT" && env TL_AUDIO_MUTE=1 TL_JNI_TRACE=0 TL_VERBOSE=0 TL_CTL="$ctl" TL_DATA="$data" $(expand "$env") $jitless \
         timeout $((secs + 60)) "$bin" "$apk" $((secs + 30)) $size ) > "$log" 2>&1
     rc=$?
     rm -rf "$data" /tmp/husk-frames-* /tmp/husk-mframes-* /tmp/husk-unity-* /tmp/husk-mc-* 2>/dev/null

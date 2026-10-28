@@ -2141,7 +2141,8 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
     L->tcb = rw + (npages + nstub) * PAGE;
     fill_data_slots(L);
     L->aot = imported;
-    if (imported) aot_alias_data(L);
+    /* TL_AOT_NO_ALIAS=1: leave the data pages unshared, as iOS does (it refuses the remap), to see on a Mac what a phone sees */
+    if (imported && !getenv("TL_AOT_NO_ALIAS")) aot_alias_data(L);
     parse_dynamic(L, dyn_v, dyn_n);
     if (L->strtab) {
         const elf_dyn *d = at(L, dyn_v);
