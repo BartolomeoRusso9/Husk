@@ -7,6 +7,8 @@
  *   tools/regress/build.sh tools/elf2macho-test.c <out>           (it links the translation layer)
  *   elf2macho-test <lib.so> <out.dylib> [--ios]       write it (macOS: also ad-hoc signed; --ios marks it for iOS, unsigned);
  *                                                     an output ending in / names it aot-<hash>-<lib>.dylib there, as the app wants
+ *   elf2macho-test --prepare <cache dir> <apk>...      what the app does before a JIT-less launch (husk_aot_prepare), ad-hoc signed
+ *                                                     (or with TL_P12=<file> TL_P12_PASSWORD=<password>)
  *   elf2macho-test --load <out.dylib> <lib.so> [fn [arg]]   dlopen it, check it against a fresh build, call fn(arg) from the
  *                                                     dylib's code (a leaf that needs no relocation: mpg123_plain_strerror -1)
  */
@@ -26,6 +28,7 @@
 #include <stdarg.h>
 
 #include "husk-tl-aot.h"
+#include "husk-tl-codesign.h"
 
 #define PAGE ((uint64_t)16384)
 #define ROUND_DOWN(x) ((x) & ~(PAGE - 1))
@@ -217,6 +220,16 @@ static int check(const char *dylib, const char *so, const char *fn, long arg)
 int main(int argc, char **argv)
 {
     tl_ld_set_verbosity(getenv("TL_VERBOSE") ? atoi(getenv("TL_VERBOSE")) : 0);
+    if (argc >= 4 && !strcmp(argv[1], "--prepare")) {
+        uint8_t *p12 = NULL; size_t p12len = 0;
+        if (getenv("TL_P12") && !(p12 = slurp(getenv("TL_P12"), &p12len))) return 1;
+        char err[300] = "";
+        int n = husk_aot_prepare((const char *const *)argv + 3, argc - 3, argv[2], p12, p12len, getenv("TL_P12_PASSWORD") ? getenv("TL_P12_PASSWORD") : "",
+                                 p12 ? "test-p12" : "adhoc", NULL, NULL, err, sizeof(err));
+        if (n < 0) { fprintf(stderr, "prepare failed: %s\n", err); return 1; }
+        printf("%d libraries ready in %s\n", n, argv[2]);
+        return 0;
+    }
     if (argc >= 4 && !strcmp(argv[1], "--load")) return check(argv[2], argv[3], argc > 4 ? argv[4] : NULL, argc > 5 ? strtol(argv[5], NULL, 0) : 0);
     if (argc < 3) {
         fprintf(stderr, "usage: %s <lib.so> <out.dylib> [--ios]\n       %s --load <out.dylib> <lib.so> [leaf function [argument]]\n", argv[0], argv[0]);

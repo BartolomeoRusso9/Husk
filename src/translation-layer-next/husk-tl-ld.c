@@ -1911,12 +1911,16 @@ static bool aot_import(const char *name, const uint8_t *file, size_t flen, uint6
     /* aot-<the .so's hash>-<library>.dylib, so dylibs of several versions of a game can sit in one folder (the app's Frameworks);
      * or <library>.dylib, as the Mac harnesses name them */
     uint64_t hash = tl_aot_hash(file, flen);
-    char path[1024]; struct stat st;
-    snprintf(path, sizeof(path), "%s/aot-%016llx-%s.dylib", g_aot_dir, (unsigned long long)hash, base_name(name));
-    if (stat(path, &st) != 0) {
-        snprintf(path, sizeof(path), "%s/%s.dylib", g_aot_dir, base_name(name));
-        if (stat(path, &st) != 0) { tl_log_line("ld: %s: no dylib made ahead of time (aot-%016llx-%s.dylib)", name, (unsigned long long)hash, base_name(name)); return false; }
+    char path[1024]; struct stat st; bool found = false;
+    /* g_aot_dir may name several folders, separated by ':' (the app's prebuilt ones, then those made on the device) */
+    for (const char *d = g_aot_dir; *d && !found; ) {
+        const char *e = strchr(d, ':'); size_t dl = e ? (size_t)(e - d) : strlen(d);
+        snprintf(path, sizeof(path), "%.*s/aot-%016llx-%s.dylib", (int)dl, d, (unsigned long long)hash, base_name(name));
+        found = stat(path, &st) == 0;
+        if (!found) { snprintf(path, sizeof(path), "%.*s/%s.dylib", (int)dl, d, base_name(name)); found = stat(path, &st) == 0; }
+        d = e ? e + 1 : d + dl;
     }
+    if (!found) { tl_log_line("ld: %s: no dylib made ahead of time (aot-%016llx-%s.dylib)", name, (unsigned long long)hash, base_name(name)); return false; }
     void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!h) { tl_log_line("ld: %s: its dylib does not load: %s", name, dlerror()); return false; }
     const struct mach_header_64 *mh = dyld_header_of(path);

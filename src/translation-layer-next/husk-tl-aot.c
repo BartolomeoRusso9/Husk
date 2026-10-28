@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Android libraries as Mach-O dylibs, made ahead of time. See husk-tl-aot.h. */
 #include "husk-tl-aot.h"
+#include "husk-tl-codesign.h"
+#include "husk-tl-internal.h"
 
 #include <errno.h>
 #include <mach-o/fixup-chains.h>
@@ -8,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <TargetConditionals.h>
 #include <unistd.h>
 
 #define PAGE ((uint64_t)16384)
@@ -151,4 +155,80 @@ out:
     tl_ld_aot_free(&A);
     free(L.b); free(C.b);
     return ok;
+}
+
+/* ------------------------------------------------------------- preparing an app */
+
+void tl_log_line(const char *fmt, ...);
+
+static bool read_text(const char *path, char *buf, size_t n)
+{
+    FILE *f = fopen(path, "r"); if (!f) return false;
+    size_t k = fread(buf, 1, n - 1, f); fclose(f); buf[k] = 0;
+    return true;
+}
+static bool write_text(const char *path, const char *text)
+{
+    FILE *f = fopen(path, "w"); if (!f) return false;
+    bool ok = fputs(text, f) >= 0; return fclose(f) == 0 && ok;
+}
+
+int husk_aot_prepare(const char *const *apks, int napks, const char *cache_dir, const uint8_t *p12, size_t p12_len,
+                     const char *password, const char *cert_tag, tl_aot_progress_fn progress, void *user, char *err, size_t errlen)
+{
+    static const char prefix[] = "lib/arm64-v8a/";
+    mkdir(cache_dir, 0755);
+    tl_zip *z = calloc((size_t)(napks > 0 ? napks : 1), sizeof(tl_zip));
+    if (!z) { snprintf(err, errlen, "out of memory"); return -1; }
+    /* the libraries, by name, from the first APK that has each */
+    typedef struct { int apk; const tl_zip_entry *e; const char *name; } lib;
+    lib *libs = NULL; int nlibs = 0, cap = 0, ready = -1;
+    for (int a = 0; a < napks; a++) {
+        char zerr[160] = "";
+        if (!tl_zip_open(&z[a], apks[a], zerr, sizeof(zerr))) { tl_log_line("aot: %s: %s", apks[a], zerr); continue; }
+        for (size_t i = 0; i < z[a].count; i++) {
+            const char *n = z[a].entries[i].name;
+            size_t l = strlen(n);
+            if (strncmp(n, prefix, sizeof(prefix) - 1) || l < sizeof(prefix) + 3 || strcmp(n + l - 3, ".so") || strchr(n + sizeof(prefix) - 1, '/')) continue;
+            const char *base = n + sizeof(prefix) - 1;
+            bool seen = false;
+            for (int k = 0; k < nlibs && !seen; k++) seen = !strcmp(libs[k].name, base);
+            if (seen) continue;
+            if (nlibs == cap) { cap = cap ? cap * 2 : 16; lib *nl = realloc(libs, (size_t)cap * sizeof(lib)); if (!nl) { snprintf(err, errlen, "out of memory"); goto out; } libs = nl; }
+            libs[nlibs++] = (lib){ a, &z[a].entries[i], base };
+        }
+    }
+    ready = 0;
+    for (int k = 0; k < nlibs; k++) {
+        if (progress) progress(user, k, nlibs, libs[k].name);
+        const uint8_t *data; size_t len; bool owned = false; char zerr[160] = "";
+        if (!tl_zip_data(&z[libs[k].apk], libs[k].e, (size_t)1 << 31, &data, &len, &owned, zerr, sizeof(zerr))) {
+            snprintf(err, errlen, "%s: %s", libs[k].name, zerr); ready = -1; goto out;
+        }
+        char path[1200], signer[1220], tag[256] = "";
+        snprintf(path, sizeof(path), "%s/aot-%016llx-%s.dylib", cache_dir, (unsigned long long)tl_aot_hash(data, len), libs[k].name);
+        snprintf(signer, sizeof(signer), "%s.signer", path);
+        struct stat st;
+        bool have = stat(path, &st) == 0, signed_now = have && read_text(signer, tag, sizeof(tag)) && cert_tag && !strcmp(tag, cert_tag);
+        char e2[200] = "";
+        bool ok = true;
+        if (!have) {
+            tl_log_line("aot: converting %s (%zu KiB)", libs[k].name, len >> 10);
+            ok = tl_aot_make_dylib(libs[k].name, data, len, path, TARGET_OS_IPHONE, NULL, e2, sizeof(e2));   /* for the platform this runs on */
+        }
+        if (owned) free((void *)data);
+        if (ok && !signed_now) {
+            unlink(signer);
+            ok = husk_codesign_dylib(path, p12, p12_len, password, e2, sizeof(e2));
+            if (ok && cert_tag) write_text(signer, cert_tag);
+            if (ok) tl_log_line("aot: %s signed", libs[k].name);
+        }
+        if (!ok) { snprintf(err, errlen, "%s: %s", libs[k].name, e2); unlink(path); ready = -1; goto out; }
+        ready++;
+    }
+    if (progress) progress(user, nlibs, nlibs, NULL);
+out:
+    for (int a = 0; a < napks; a++) if (z[a].map) tl_zip_close(&z[a]);
+    free(z); free(libs);
+    return ready;
 }

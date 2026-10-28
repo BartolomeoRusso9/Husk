@@ -92,6 +92,7 @@ struct HuskApp: App {
                 .onOpenURL { url in
                     // husk://open_app?unique_identifier=… from a Home Screen clip; anything else may be a shared APK
                     if GameLink.handle(url) { return }
+                    if SigningCertificate.shared.handle(url) { return }   // husk://certificate from SideStore / AltStore
                     if !AppClip.handle(url) { IncomingFiles.shared.receive(url) }
                 }
         }

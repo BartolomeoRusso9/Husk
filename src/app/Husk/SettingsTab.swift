@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Settings, as the iOS Settings app lays them out: a card for the app up top, then groups of rows that each
 /// push a page of their own. What belongs to the app, what belongs to the emulator, and what the thing is.
@@ -559,6 +560,10 @@ struct JITSettings: View {
     @AppStorage(JITCoordinator.trollStoreAutoKey) private var trollStoreJIT = true
     @State private var keepAttached = JITBootstrap.keepDebuggerAttached
     @AppStorage(JITLess.key) private var jitless = false
+    @ObservedObject private var certificate = SigningCertificate.shared
+    @State private var pickedP12: Data?
+    @State private var p12Password = ""
+    @State private var cacheBytes = JITLess.cacheBytes
 
     private var pairingLabel: String {
         switch jit.pairingSource {
@@ -578,13 +583,84 @@ struct JITSettings: View {
 
             Section {
                 Toggle("JIT-less Mode", isOn: $jitless)
-                DetailRow(label: "Games made for it", value: JITLess.libraryCount > 0 ? "Geometry Dash" : "none in this build", mono: false)
+                DetailRow(label: "Prebuilt games", value: JITLess.libraryCount > 0 ? "Geometry Dash" : "none in this build", mono: false)
+                if cacheBytes > 0 {
+                    DetailRow(label: "Converted games", value: ByteCountFormatter.string(fromByteCount: cacheBytes, countStyle: .file), mono: false)
+                    Button(role: .destructive) {
+                        JITLess.clearCache(); cacheBytes = JITLess.cacheBytes
+                    } label: { Label("Remove Converted Games", systemImage: "trash") }
+                }
             } header: {
                 Text("Experimental")
             } footer: {
-                Text("Android games run without JIT: their code was converted ahead of time and is signed with Husk, so no "
-                   + "debugger is needed. Only games converted for this build work this way (Geometry Dash 2.207 and 2.2081, "
-                   + "without Geode). While this is on, Husk makes no executable memory, even when JIT is on.")
+                Text("Android games run without JIT: their code is converted once and signed with your developer certificate, so no "
+                   + "debugger is needed. The first start of each game takes a few seconds longer. Geode mods and engines that "
+                   + "make code while they run still need JIT. While this is on, Husk makes no executable memory, even when JIT is on.")
+            }
+            .onAppear { cacheBytes = JITLess.cacheBytes }
+
+            Section {
+                if let info = certificate.info {
+                    DetailRow(label: "Team", value: info.teamID)
+                    DetailRow(label: "Expires", value: info.expires.formatted(date: .abbreviated, time: .shortened), mono: false)
+                    if info.expires < Date() {
+                        Text("This certificate has expired. Refresh Husk in your store, then import its certificate again.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                } else {
+                    DetailRow(label: "Certificate", value: "not imported", mono: false)
+                }
+                ForEach(SigningCertificate.Store.allCases) { store in
+                    Button {
+                        certificate.requestFromStore(store)
+                    } label: { Label("Import from \(store.title)", systemImage: "arrow.down.circle") }
+                }
+                Button {
+                    HuskFilePicker.present(types: [.pkcs12, .data], multiple: false, onPick: { urls in
+                        guard let url = urls.first else { return }
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        guard let data = try? Data(contentsOf: url) else { certificate.lastError = "That file could not be read."; return }
+                        p12Password = ""
+                        pickedP12 = data
+                    }, onFail: { certificate.lastError = $0 })
+                } label: { Label("Import .p12 File", systemImage: "doc.badge.plus") }
+                if certificate.info != nil {
+                    Button(role: .destructive) { certificate.remove() } label: { Label("Remove Certificate", systemImage: "trash") }
+                }
+                if let why = certificate.lastError {
+                    Text(why).font(.caption).foregroundStyle(.orange)
+                }
+            } header: {
+                Text("Signing Certificate")
+            } footer: {
+                Text("JIT-less mode signs converted games with the certificate your store installed Husk with "
+                   + "\(SigningCertificate.installedTeamID.map { "(team \($0))" } ?? ""). SideStore and AltStore can hand it over; "
+                   + "or import the .p12 file and its password. It stays in this device's Keychain. A free Apple ID's certificate "
+                   + "changes every 7 days: import it again after refreshing Husk, and games are signed again on their next start.")
+            }
+            .sheet(isPresented: Binding(get: { pickedP12 != nil }, set: { if !$0 { pickedP12 = nil } })) {
+                NavigationView {
+                    Form {
+                        Section {
+                            SecureField("Password (empty if none)", text: $p12Password)
+                                .textContentType(.password)
+                        } footer: {
+                            Text("The password the .p12 file was exported with.")
+                        }
+                    }
+                    .navigationTitle("Certificate Password")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { pickedP12 = nil } }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Import") {
+                                if let data = pickedP12 { certificate.importP12(data, password: p12Password) }
+                                pickedP12 = nil
+                            }
+                        }
+                    }
+                }
             }
 
             Section {

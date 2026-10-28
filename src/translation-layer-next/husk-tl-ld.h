@@ -142,8 +142,8 @@ typedef struct tl_aot_manifest {
 } tl_aot_manifest;
 uint64_t tl_aot_hash(const uint8_t *p, size_t n);
 
-/* Where the loader looks for <library>.dylib made ahead of time (NULL: nowhere). A matching one is used instead of mapping the
- * library into executable memory. */
+/* Where the loader looks for <library>.dylib made ahead of time (NULL: nowhere; several folders separated by ':', searched in
+ * order). A matching one is used instead of mapping the library into executable memory. */
 void tl_ld_set_aot_dir(const char *dir);
 void tl_ld_aot_free(tl_ld_aot_image *img);
 

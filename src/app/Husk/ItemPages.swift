@@ -134,6 +134,9 @@ struct GamePage: View {
     @State private var confirmRestore: URL?
     @State private var confirmQuit = false
     @State private var reporting: CompatSubject?
+    /// JIT-less mode converting and signing this game's libraries before it starts
+    @State private var preparing: String?
+    @State private var prepareFailed: String?
 
     private var runs: Bool { app.report?.canRun == true }
 
@@ -277,6 +280,11 @@ struct GamePage: View {
         } message: {
             Text("\(blockedBy ?? "The other game") is still loaded and only one game can run per session. Husk closes; open it again and \(app.label) starts by itself.")
         }
+        .alert("JIT-less mode could not prepare this game", isPresented: Binding(get: { prepareFailed != nil }, set: { if !$0 { prepareFailed = nil } })) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(prepareFailed ?? "")
+        }
         .confirmationDialog("Remove \(app.label)?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
                 dismiss()
@@ -294,8 +302,27 @@ struct GamePage: View {
         }
     }
 
-    /// Play: with Geode on, whatever it is missing (a newer release, its resources) is fetched first.
+    /// Play: in JIT-less mode the game's libraries are converted and signed first (once); with Geode on, whatever it is missing
+    /// (a newer release, its resources) is fetched first.
     private func play() {
+        if JITLess.enabled, SigningCertificate.credentials() != nil, preparing == nil {
+            preparing = "Preparing for JIT-less mode…"
+            Task {
+                do {
+                    try await JITLess.prepare(apks: app.apks) { text in Task { @MainActor in preparing = text } }
+                    preparing = nil
+                    playPrepared()
+                } catch {
+                    preparing = nil
+                    prepareFailed = error.localizedDescription
+                }
+            }
+            return
+        }
+        playPrepared()
+    }
+
+    private func playPrepared() {
         guard TLAppSettings.load(app.id).geode, case .ready = GeodeSupport.shared.current(app) else {
             if TLAppSettings.load(app.id).geode {
                 Task { await GeodeSupport.shared.prepare(app); start() }
@@ -388,6 +415,9 @@ struct GamePage: View {
             }
         } else if blockedBy != nil {
             BigButton(title: "Close Husk to Play", systemImage: "xmark.circle", prominent: false) { confirmQuit = true }
+        } else if let preparing {
+            HStack(spacing: 10) { ProgressView(); Text(preparing).foregroundStyle(.secondary).lineLimit(1) }
+                .frame(maxWidth: .infinity).frame(height: 50)
         } else if !Launcher.jitOn && !JITLess.enabled {
             if jit.busy {
                 HStack(spacing: 10) { ProgressView(); Text(jit.status ?? "Turning on JIT…").foregroundStyle(.secondary) }

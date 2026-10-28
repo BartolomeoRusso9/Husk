@@ -37,6 +37,17 @@ extern "C" {
 bool tl_aot_make_dylib(const char *name, const uint8_t *file, size_t flen, const char *out_path, bool ios, tl_ld_aot_image *info,
                        char *err, size_t errlen);
 
+/*
+ * Get an app ready to run with no JIT: every arm64 library in its APKs (the .so files under lib/arm64-v8a; the first APK that has a library wins,
+ * as the loader's search does) as a dylib in cache_dir, aot-<hash>-<library>.dylib, signed with the developer certificate in p12
+ * (husk-tl-codesign.h). A dylib already there is only signed again when cert_tag (any string naming the certificate) differs from
+ * the one it was signed with, which is kept beside it in <dylib>.signer. progress (optional) is called before each library.
+ * Returns how many libraries are ready, or -1 with a reason in err.
+ */
+typedef void (*tl_aot_progress_fn)(void *user, int index, int total, const char *library);
+int husk_aot_prepare(const char *const *apks, int napks, const char *cache_dir, const uint8_t *p12, size_t p12_len,
+                     const char *password, const char *cert_tag, tl_aot_progress_fn progress, void *user, char *err, size_t errlen);
+
 #ifdef __cplusplus
 }
 #endif
