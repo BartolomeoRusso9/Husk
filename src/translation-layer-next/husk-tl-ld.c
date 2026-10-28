@@ -615,10 +615,46 @@ void tl_unresolved_called_c(const char *name, void *lr) { tl_unresolved_called(n
 static uint8_t *g_stub_rx, *g_stub_rw;
 static size_t g_stub_left;
 
+/*
+ * With no executable memory (no JIT: libraries imported from dylibs), an unresolved import binds to one of a pool of stubs built
+ * into Husk: stub i is `mov x17, #i; b common`, and common loads the i-th name for tl_unresolved_entry, which expects it in x17.
+ */
+#define UNRES_POOL 8192
+__attribute__((used)) static const char *g_unres_names[UNRES_POOL];
+static int g_unres_used;
+extern char tl_unres_pool[] __asm__("_tl_unres_pool");
+#if defined(__aarch64__)
+__asm__(".text\n"
+        ".p2align 2\n"
+        "_tl_unres_pool:\n"
+        ".set tl_unres_i, 0\n"
+        ".rept 8192\n"
+        "  movz x17, #(tl_unres_i)\n"
+        "  b _tl_unres_pool_common\n"
+        "  .set tl_unres_i, tl_unres_i + 1\n"
+        ".endr\n"
+        "_tl_unres_pool_common:\n"
+        "  adrp x16, _g_unres_names@PAGE\n"
+        "  add x16, x16, _g_unres_names@PAGEOFF\n"
+        "  ldr x17, [x16, x17, lsl #3]\n"
+        "  b _tl_unresolved_entry\n");
+#endif
+
+static void *pool_stub(const char *name)
+{
+#if defined(__aarch64__)
+    if (g_unres_used >= UNRES_POOL) return NULL;
+    g_unres_names[g_unres_used] = name;
+    return tl_unres_pool + 8 * g_unres_used++;
+#else
+    (void)name; return NULL;
+#endif
+}
+
 static void *make_stub(const char *name)
 {
     if (g_stub_left < 32) {
-        if (!tl_xmem_alloc(PAGE, &g_stub_rx, &g_stub_rw)) return NULL;
+        if (!tl_xmem_alloc(PAGE, &g_stub_rx, &g_stub_rw)) return pool_stub(name);
         g_stub_left = PAGE;
     }
     uint8_t *rw = g_stub_rw, *rx = g_stub_rx;
@@ -2298,8 +2334,13 @@ static tl_lib *load_locked(const char *name, int depth, bool system)
         tl_log_line("ld: %s is not in the APK and is not a system library", name);
         return NULL;
     }
-    { char e[160] = ""; if (!tl_xmem_open(768u << 20, e, sizeof(e))) { tl_log_line("ld: %s", e); free(file); return NULL; } }
-    {   /* adrp, which the loader uses to retarget code at the writable view, reaches +-4 GiB. */
+    char e[160] = "";
+    bool xmem = tl_xmem_open(768u << 20, e, sizeof(e));
+    if (!xmem) {   /* only libraries made ahead of time (tl_ld_set_aot_dir) can load: map_library says which cannot */
+        static bool said;
+        if (!said) { said = true; tl_log_line("ld: no executable memory (%s): only libraries made into dylibs ahead of time can load", e); }
+    }
+    if (xmem) {   /* adrp, which the loader uses to retarget code at the writable view, reaches +-4 GiB. */
         ptrdiff_t d = tl_xmem_delta();
         if (d > ((ptrdiff_t)3 << 30) || d < -((ptrdiff_t)3 << 30)) { tl_log_line("ld: the writable and executable views are %td MiB apart: too far for adrp", d >> 20); free(file); return NULL; }
     }

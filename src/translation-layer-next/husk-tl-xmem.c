@@ -268,6 +268,11 @@ static bool open_platform(size_t host_bytes, char *err, size_t errlen)
 bool tl_xmem_open(size_t host_bytes, char *err, size_t errlen)
 {
     bool ok = true;
+    /* TL_NO_XMEM=1: there is no executable memory to be had, as on a phone with no JIT (Mac tests of Husk 3.2's dylibs) */
+    if (getenv("TL_NO_XMEM")) {
+        if (err && errlen) snprintf(err, errlen, "executable memory is turned off (TL_NO_XMEM)");
+        return false;
+    }
     pthread_mutex_lock(&g_x.lock);
     if (!g_x.open) {
         char local[160] = "";
