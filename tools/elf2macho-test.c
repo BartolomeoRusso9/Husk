@@ -177,40 +177,58 @@ static int check(const char *dylib, const char *so, const char *fn, long arg)
     if (!h) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 1; }
     const struct mach_header_64 *mh = header_of(dylib);
     if (!mh) { fprintf(stderr, "loaded, but dyld does not list it\n"); return 1; }
-    unsigned long isz = 0, dsz = 0, msz = 0;
-    uint8_t *rx = getsectiondata(mh, "__TEXT", "__husk_image", &isz);
-    uint8_t *rw = getsectiondata(mh, "__DATA", "__husk_data", &dsz);
+    size_t msz = 0;
+    uint8_t *rx = (uint8_t *)(uintptr_t)mh + PAGE;      /* the image starts on the page after the header */
+    uint8_t *rw = rx;                                   /* its data pages are writable there, at their own addresses */
     const tl_aot_manifest *M = (const tl_aot_manifest *)getsectiondata(mh, "__TEXT", "__husk_manifest", &msz);
     const uint64_t S = A.size;
-    printf("dlopen ok: header %p, image %p (%lu KiB), copy %p, delta 0x%lx\n", (void *)mh, (void *)rx, isz >> 10, (void *)rw, (long)(rw - rx));
-    if (!rx || !rw || isz != S || dsz != S || (uint64_t)(rw - rx) != S) { fprintf(stderr, "FAIL: sections are not where they belong\n"); return 1; }
-    if ((uintptr_t)rx % PAGE || (uintptr_t)rw % PAGE) { fprintf(stderr, "FAIL: not 16 KiB aligned\n"); return 1; }
+    printf("dlopen ok: header %p, image %p (%zu pages, %llu KiB), %u segments\n", (void *)mh, (void *)rx, A.page_count,
+           (unsigned long long)(S >> 10), mh->ncmds);
     if (!M || msz != sizeof(*M) || memcmp(M->magic, TL_AOT_MAGIC, 8) || M->version != TL_AOT_VERSION || M->so_hash != tl_aot_hash(E.file, E.flen)
         || M->size != S || M->base_vaddr != A.base_vaddr) { fprintf(stderr, "FAIL: the manifest does not describe this library\n"); return 1; }
+    if ((uintptr_t)rx % PAGE) { fprintf(stderr, "FAIL: not 16 KiB aligned\n"); return 1; }
     /* The same library patched again, in other memory at another address, must give the same bytes: nothing in the image depends
      * on where it was built. */
     if (memcmp(rx, A.text, S)) {
         size_t k = 0; while (k < S && rx[k] == A.text[k]) k++;
-        fprintf(stderr, "FAIL: the dylib's code differs from a fresh build at +%#zx\n", k); return 1;
+        fprintf(stderr, "FAIL: the dylib differs from a fresh build at +%#zx\n", k); return 1;
     }
-    uint8_t *want = malloc(S); elf_fill(&E, A.base_vaddr, want, S);
-    if (memcmp(rw, want, S)) { fprintf(stderr, "FAIL: the dylib's data differs from the .so\n"); return 1; }
-    free(want);
-    vm_prot_t px = prot_at(rx), pw = prot_at(rw);
-    printf("matches a fresh build; image %c%c%c, copy %c%c%c\n", px & 1 ? 'r' : '-', px & 2 ? 'w' : '-', px & 4 ? 'x' : '-',
-           pw & 1 ? 'r' : '-', pw & 2 ? 'w' : '-', pw & 4 ? 'x' : '-');
-    if ((px & (VM_PROT_WRITE | VM_PROT_EXECUTE)) != VM_PROT_EXECUTE || (pw & (VM_PROT_WRITE | VM_PROT_EXECUTE)) != VM_PROT_WRITE) {
-        fprintf(stderr, "FAIL: protections\n"); return 1;
+    /* Every page is mapped as its class says: executable pages read + execute, data pages read + write at the very address the code
+     * uses for them (so data read at a code address is the relocated data, with no remapping at run time). */
+    for (size_t p = 0; p < A.page_count; p++) {
+        vm_prot_t prot = prot_at(rx + p * PAGE), want = (A.page_class[p] & 1) ? VM_PROT_EXECUTE : VM_PROT_WRITE;
+        if ((prot & (VM_PROT_WRITE | VM_PROT_EXECUTE)) != want) {
+            fprintf(stderr, "FAIL: page %zu is %c%c%c, expected %s\n", p, prot & 1 ? 'r' : '-', prot & 2 ? 'w' : '-', prot & 4 ? 'x' : '-',
+                    want == VM_PROT_EXECUTE ? "r-x" : "rw-");
+            return 1;
+        }
     }
-    rw[S - 1] = 0x5a;                     /* the copy takes writes */
+    printf("%zu pages mapped as laid out\n", A.page_count);
+    /* A library built for 4 KiB pages has its data in writable copies after the image, at the image's size plus the page's index:
+     * the code reads its data there. */
+    size_t ncopy = 0;
+    for (size_t p = 0; p < A.page_count; p++) {
+        if (!(A.page_class[p] & 2)) continue;
+        ncopy++;
+        uint8_t *c = rx + S + p * PAGE;
+        vm_prot_t prot = prot_at(c);
+        if ((prot & (VM_PROT_WRITE | VM_PROT_EXECUTE)) != VM_PROT_WRITE) {
+            fprintf(stderr, "FAIL: the copy of page %zu is %c%c%c, expected rw-\n", p, prot & 1 ? 'r' : '-', prot & 2 ? 'w' : '-',
+                    prot & 4 ? 'x' : '-');
+            return 1;
+        }
+        if (memcmp(c, A.text + p * PAGE, PAGE)) { fprintf(stderr, "FAIL: the copy of page %zu differs from the image\n", p); return 1; }
+    }
+    if (ncopy) printf("%zu data pages have writable copies after the image\n", ncopy);
+    rw[S - 1] = 0x5a;                     /* the last data page takes writes */
     if (fn) {
         uint64_t v = elf_lookup(&E, fn);
         if (!v) { fprintf(stderr, "FAIL: %s is not a defined symbol of %s\n", fn, so); return 1; }
         const char *(*f)(long) = (const char *(*)(long))(rx + (v - A.base_vaddr));
         const char *r = f(arg);
-        /* a string in read-only data is read through the image; one in writable data through the copy */
-        bool in = r && (((uint8_t *)r >= rx && (uint8_t *)r < rx + S) || ((uint8_t *)r >= rw && (uint8_t *)r < rw + S));
-        printf("%s(%ld) from the dylib's code at %p returned %p: \"%s\"\n", fn, arg, (void *)f, (void *)r, in ? r : "(outside the image)");
+        bool in = r && (uint8_t *)r >= rx && (uint8_t *)r < rx + S;
+        printf("%s(%ld) from the dylib's code at %p returned %p: \"%s\"%s\n", fn, arg, (void *)f, (void *)r, in ? r : "(outside the image)",
+               in ? "" : " -- WARNING");
     }
     tl_ld_aot_free(&A);
     printf("OK\n");
@@ -239,14 +257,17 @@ int main(int argc, char **argv)
     elf E; if (!elf_open(&E, argv[1])) return 1;
     const char *slash = strrchr(argv[1], '/');
     tl_ld_aot_image A; char err[200];
-    /* an output ending in / is a folder: the dylib is named as the app looks for it, aot-<hash of the .so>-<library>.dylib */
+    /* an output ending in / is a folder: the dylib is named as the app looks for it, aot-v<version>-<hash of the .so>-<library>.dylib */
     char out[1200]; size_t ol = strlen(argv[2]);
-    if (ol && argv[2][ol - 1] == '/') snprintf(out, sizeof(out), "%saot-%016llx-%s.dylib", argv[2], (unsigned long long)tl_aot_hash(E.file, E.flen), slash ? slash + 1 : argv[1]);
+    if (ol && argv[2][ol - 1] == '/') {
+        char nm[200]; tl_aot_file_name(nm, sizeof(nm), tl_aot_hash(E.file, E.flen), slash ? slash + 1 : argv[1]);
+        snprintf(out, sizeof(out), "%s%s", argv[2], nm);
+    }
     else snprintf(out, sizeof(out), "%s", argv[2]);
     argv[2] = out;
     if (!tl_aot_make_dylib(slash ? slash + 1 : argv[1], E.file, E.flen, argv[2], ios, &A, err, sizeof(err))) { fprintf(stderr, "%s\n", err); return 1; }
-    printf("%s: image at vaddr 0x%llx, %zu + %zu stub + 1 pages (%zu KiB, PT_LOAD align up to 0x%llx), %s\n"
-           "  rewritten: %zu x18 (%zu not), %zu svc (%zu out of range), %zu tpidr, %zu adrp, %zu adr (%zu not); %zu pages mix code and data\n",
+    printf("%s: image at vaddr 0x%llx, %zu + %zu stub + 2 pages (%zu KiB, PT_LOAD align up to 0x%llx), %s\n"
+           "  rewritten: %zu x18 (%zu not), %zu svc (%zu out of range), %zu tpidr, %zu adrp, %zu adr (%zu not); %zu data pages copied\n",
            argv[2], (unsigned long long)A.base_vaddr, A.npages, A.nstub, A.size >> 10, (unsigned long long)E.max_align, ios ? "iOS" : "macOS",
            A.n_x18, A.n_x18_failed, A.n_svc, A.n_svc_far, A.n_tpidr, A.n_adrp, A.n_adr, A.n_adr_failed, A.n_mixed);
     if (!ios) {

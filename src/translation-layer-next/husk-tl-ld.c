@@ -64,6 +64,10 @@ struct tl_lib {
     uint64_t base_vaddr;
     size_t npages;
     uint8_t *pflags;               /* TL_PAGE_* per page */
+    uint8_t *mixed;                /* one per page: 1 when its data is kept in a writable copy after the image (a 4 KiB-page library); see mixed_page */
+    /* An imported dylib's relocation tables cannot be read from its image: when it was made, patch_library wrote the island pool's
+     * stubs into the tail of .rela. These are the tables as the .so has them, copied from its bytes at import; NULL on the JIT path. */
+    uint8_t *rela_src, *jmprel_src, *arela_src, *relr_src;
     elf_phdr *phdr;                /* malloc'd copy, file addresses */
     unsigned phnum;
 
@@ -81,8 +85,13 @@ struct tl_lib {
     int ndeps;
     bool deps_ready;
 
-    uint8_t *stub_rx, *stub_rw;    /* pages after the image: stubs for rewritten `svc` and x18 sites; their first 16 bytes are data slots */
-    uint8_t *tcb;                  /* the fake thread block this library's `mrs tpidr_el0` reads: the page after the stubs, data view */
+    uint8_t *stub_rx, *stub_rw;    /* pages after the image: stubs for rewritten `svc` and x18 sites */
+    uint8_t *slots;                /* the data page the stubs of both pools read their run-time values from (SLOT_SVC, SLOT_VX18) */
+    uint8_t *tcb;                  /* the fake thread block this library's `mrs tpidr_el0` reads: the page after the slots, data view */
+    uint8_t *dup;                  /* a 4 KiB-page library: the writable copies of its data pages, at rx + size + page * 16384; NULL otherwise */
+    size_t size;                   /* the image's pages, the stub pages, the slot page and the thread-block page */
+    size_t n_mixed;                /* the pages `dup` copies; also the manifest's n_mixed */
+    bool build;                    /* being built ahead of time (tl_ld_aot_build): one region, the copy of a mixed page exists only in the dylib */
     size_t stub_used, stub_cap, nstub;
     uint8_t *isl_rx, *isl_rw;      /* a second pool of stubs inside the image: the dead tail of the relocation table, for sites too far from the stub pages */
     size_t isl_used, isl_cap;
@@ -102,6 +111,7 @@ struct tl_lib {
     size_t n_x18, n_x18_failed;    /* sites rewritten for the reserved register, and sites that could not be */
     int state;                     /* 0 mapped, 1 relocating, 2 relocated, 3 initialising, 4 initialised */
     uint32_t n_unresolved;
+    size_t n_reloc_code;           /* imported: relocations that name a code page, which a dylib maps read-only, so were not applied */
     bool system;                   /* from the runtime's own folders (an APEX's lib64), not the app: what it needs comes from there too */
     bool aot;                      /* imported from a dylib made ahead of time (tl_ld_aot_build): its code is already rewritten and read-only */
 };
@@ -109,6 +119,37 @@ static inline bool data_page(const tl_lib *L, size_t page);
 static bool in_code(const tl_lib *L, uint64_t vaddr);
 static bool writable_range(const tl_lib *L, uint64_t lo, uint64_t hi);
 static inline bool writable_vaddr(const tl_lib *L, uint64_t va) { return writable_range(L, va, va + 1); }
+
+/*
+ * Whether a page's data is kept in a writable copy after the image (see map_library). A library built for 16 KiB pages has code and
+ * data on separate pages, so its data pages are writable in the dylib at their own addresses and are relocated there; nothing is
+ * copied. A library built for 4 KiB pages has a 16 KiB page that holds the end of its code and the start of its .data.rel.ro (or GOT),
+ * and a dylib has to make that page executable, since it holds code and is signed. So every writable data page of such a library is
+ * copied after the image, the loader relocates the copies, and every rewritten data access names its copy (mixed_page, waddr,
+ * data_view). The copies keep the image's numbering (copy of page p at rx + size + p * 16384), so an address into a copied page plus
+ * an offset -- a vtable pointer, a structure that straddles two pages -- still lands on the right copied page.
+ */
+static inline bool mixed_page(const tl_lib *L, size_t page)
+{
+    return L->dup && page < L->npages && L->mixed && L->mixed[page];
+}
+
+/* Where the image's bytes at rx-space offset `off` are: their own address (in the JIT region's second view, or in the dylib's data
+ * segment), or a mixed page's writable copy. While a dylib is being built there is no copy -- one region holds everything -- and the
+ * address the copy will have is only for encoding (data_view). */
+static inline uint8_t *waddr(const tl_lib *L, uint64_t off)
+{
+    return !L->build && mixed_page(L, (size_t)(off / PAGE)) ? L->dup + off : L->rw + off;
+}
+
+/* The address a rewritten instruction must name for the data at rx-space pointer `p` (in the JIT region, `rw` is the second view of
+ * the same memory, so the delta between the views is what the code gets; in a dylib it is 0). */
+static inline const void *data_view(const tl_lib *L, const void *p)
+{
+    const uint8_t *x = p;
+    uint64_t off = (uint64_t)(x - L->rx);
+    return mixed_page(L, (size_t)(off / PAGE)) ? (const void *)(L->dup + off) : (const void *)(x + (L->rw - L->rx));
+}
 
 
 static struct {
@@ -131,7 +172,9 @@ void tl_ld_set_verbosity(int v) { G.verbosity = v; }
 void tl_ld_set_environment(char **argv, char **envp) { G.argv = argv; G.envp = envp; }
 size_t tl_ld_unresolved_count(void) { return G.unresolved; }
 
-static inline const void *at(const tl_lib *L, uint64_t vaddr) { return L->rw + (vaddr - L->base_vaddr); }
+/* The image's bytes at `vaddr`: through the writable view, which for a mixed page is its copy (the dylib's own page there is the
+ * unrelocated, executable one). */
+static inline const void *at(const tl_lib *L, uint64_t vaddr) { return waddr(L, vaddr - L->base_vaddr); }
 
 /* ------------------------------------------------------------- the APKs */
 
@@ -287,7 +330,7 @@ static void *sym_value(const tl_lib *L, const elf_sym *s)
     uint64_t off = s->st_value - L->base_vaddr;
     size_t page = (size_t)(off / PAGE);
     bool is_func = (s->st_info & 0xf) == 2;
-    if (!is_func && page < L->npages && ((L->pflags[page] & TL_PAGE_W) || writable_vaddr(L, s->st_value))) return L->rw + off;
+    if (!is_func && page < L->npages && ((L->pflags[page] & TL_PAGE_W) || writable_vaddr(L, s->st_value))) return waddr(L, off);
     return L->rx + off;
 }
 
@@ -815,10 +858,11 @@ bool tl_ld_probe(tl_lib *L, uint64_t vaddr, void (*cb)(uint64_t *regs))
  * Stubs are position-independent: they hold no absolute address, so the same bytes work wherever the image is loaded -- in the JIT
  * region, or as a signed dylib made ahead of time (elf2macho, Husk 3.2), where the code is read-only and its address unknown when it
  * is written. An address a stub needs is computed from its own pc (adrp + add). A value only known at run time is read from a data
- * slot through the data view (slot + delta), which the loader fills when it maps or imports the library:
+ * slot, which the loader fills when it maps or imports the library. In the JIT region the slots are the first bytes of the stub pages'
+ * writable view; a dylib has its own slot page, because a page that holds stubs executes and so cannot be written:
  */
-#define SLOT_SVC   0              /* in the stub pages and the island pool: the address of tl_svc_common */
-#define SLOT_VX18  8              /* in the stub pages: the virtual x18's byte offset from the thread's TSD base */
+#define SLOT_SVC   0              /* the address of tl_svc_common */
+#define SLOT_VX18  8              /* the virtual x18's byte offset from the thread's TSD base */
 
 /* adrp Xd, <the 4 KiB page of target>, for an instruction at pc; false when the target is out of adrp's reach (+-4 GiB) */
 static bool e_adrp_ok(const void *pc, const void *target)
@@ -849,18 +893,17 @@ static bool stub_in_range(const uint8_t *site, const uint8_t *stub)
 
 /*
  * A 32-byte slot for a site, as writable and executable addresses, from whichever of the library's two stub pools is
- * within branch range of the site (a branch reaches 128 MiB, and Minecraft's code spans 220 MiB). `*lit` is the
- * pool's literal slot, which holds the address of the shared handler.
+ * within branch range of the site (a branch reaches 128 MiB, and Minecraft's code spans 220 MiB).
  */
-static bool stub_slot(tl_lib *L, const uint8_t *site_rx, uint8_t **rx, uint8_t **rw, const uint8_t **lit)
+static bool stub_slot(tl_lib *L, const uint8_t *site_rx, uint8_t **rx, uint8_t **rw)
 {
     if (L->stub_used + 32 <= L->stub_cap && stub_in_range(site_rx, L->stub_rx + L->stub_used)) {
-        *rx = L->stub_rx + L->stub_used; *rw = L->stub_rw + L->stub_used; *lit = L->stub_rx;
+        *rx = L->stub_rx + L->stub_used; *rw = L->stub_rw + L->stub_used;
         L->stub_used += 32;
         return true;
     }
     if (L->isl_used + 32 <= L->isl_cap && stub_in_range(site_rx, L->isl_rx + L->isl_used)) {
-        *rx = L->isl_rx + L->isl_used; *rw = L->isl_rw + L->isl_used; *lit = L->isl_rx;
+        *rx = L->isl_rx + L->isl_used; *rw = L->isl_rw + L->isl_used;
         L->isl_used += 32;
         return true;
     }
@@ -875,8 +918,8 @@ static bool stub_slot(tl_lib *L, const uint8_t *site_rx, uint8_t **rx, uint8_t *
  */
 static bool adr_stub(tl_lib *L, const uint8_t *site_rx, uint32_t rd, const uint8_t *target, uint32_t *branch)
 {
-    uint8_t *rx, *rw; const uint8_t *lit;
-    if (!stub_slot(L, site_rx, &rx, &rw, &lit)) return false;
+    uint8_t *rx, *rw;
+    if (!stub_slot(L, site_rx, &rx, &rw)) return false;
     if (!e_adrp_ok(rx, target)) { memset(rw, 0, 32); return false; }
     int64_t to = ((int64_t)rx - (int64_t)site_rx) / 4;
     int64_t back = ((int64_t)(site_rx + 4) - (int64_t)(rx + 8)) / 4;
@@ -894,8 +937,8 @@ static bool adr_stub(tl_lib *L, const uint8_t *site_rx, uint32_t rd, const uint8
 /* An instruction that should put a constant in Xd (the cache type register's value): a stub that moves it there and branches back. */
 static bool const_stub(tl_lib *L, const uint8_t *site_rx, uint32_t rd, uint64_t value, uint32_t *branch)
 {
-    uint8_t *rx, *rw; const uint8_t *lit;
-    if (!stub_slot(L, site_rx, &rx, &rw, &lit)) return false;
+    uint8_t *rx, *rw;
+    if (!stub_slot(L, site_rx, &rx, &rw)) return false;
     int64_t to = ((int64_t)rx - (int64_t)site_rx) / 4;
     int64_t back = ((int64_t)(site_rx + 4) - (int64_t)(rx + 16)) / 4;
     uint32_t code[8] = {
@@ -914,9 +957,9 @@ static bool const_stub(tl_lib *L, const uint8_t *site_rx, uint32_t rd, uint64_t 
 /* A 32-byte stub for the `svc` at site_rx; returns its executable address, or NULL when no pool has room within range. */
 static uint8_t *svc_stub(tl_lib *L, const uint8_t *site_rx)
 {
-    uint8_t *rx, *rw; const uint8_t *lit;
-    if (!stub_slot(L, site_rx, &rx, &rw, &lit)) return NULL;
-    const uint8_t *slot = lit + SLOT_SVC + (L->rw - L->rx);       /* the pool's tl_svc_common slot, in the data view */
+    uint8_t *rx, *rw;
+    if (!stub_slot(L, site_rx, &rx, &rw)) return NULL;
+    const uint8_t *slot = L->slots + SLOT_SVC;                    /* the pool's tl_svc_common slot, on the data page */
     if (!e_adrp_ok(rx + 8, slot)) { memset(rw, 0, 32); return NULL; }
     int64_t back = ((int64_t)(site_rx + 4) - (int64_t)(rx + 28)) / 4;
     uint32_t code[8] = {
@@ -1049,7 +1092,7 @@ static unsigned pick_scratch(uint32_t used, unsigned avoid)
 enum { X18_NONE = 0, X18_DONE = 1, X18_FAILED = 2 };
 
 /* Rewrite the instruction at site_rw (executable address pc) if it names x18. */
-static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc, ptrdiff_t delta)
+static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc)
 {
     uint32_t insn = *site_rw;
     if ((insn & 31u) != 18 && ((insn >> 5) & 31u) != 18 && ((insn >> 10) & 31u) != 18 && ((insn >> 16) & 31u) != 18)
@@ -1070,7 +1113,7 @@ static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc, ptrdiff_
 #define EMIT(word) do { uint32_t w_ = (word); c[n++] = w_; } while (0)
 #define EMIT_B(to) do { uint32_t w_ = e_b(rx + n * 4, (to)); c[n++] = w_; } while (0)
     /* R = the address of this thread's virtual x18 (TSD base + the offset in the SLOT_VX18 data slot); U is clobbered */
-    const uint8_t *vslot = L->stub_rx + SLOT_VX18 + delta;
+    const uint8_t *vslot = L->slots + SLOT_VX18;
     if (!e_adrp_ok(rx, vslot) || !e_adrp_ok(rx + X18_STUB_BYTES, vslot)) return X18_FAILED;
 #define EMIT_SLOT_ADDR(R, U) do { EMIT(e_adrp((U), rx + n * 4, vslot)); EMIT(e_ldr_lo12((U), (U), vslot)); \
                                   EMIT(e_mrs_tsd(R)); EMIT(e_and_tsd(R)); EMIT(e_add_reg((R), (R), (U))); } while (0)
@@ -1089,7 +1132,7 @@ static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc, ptrdiff_
             if (tp >= (uintptr_t)L->rx && tp < (uintptr_t)L->rx + L->npages * PAGE) {
                 uint64_t tv = (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr;
                 if (data_page(L, (tp - (uintptr_t)L->rx) / PAGE) || (page ? writable_range(L, tv, tv + 0x1000) : writable_vaddr(L, tv)))
-                    tp += (uintptr_t)delta;
+                    tp = (uintptr_t)data_view(L, (const void *)tp);
             }
             if (!e_adrp_ok(rx + n * 4, (const void *)tp)) return X18_FAILED;
             EMIT(e_adrp(S, rx + n * 4, (const void *)tp));
@@ -1097,7 +1140,7 @@ static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc, ptrdiff_
         } else {
             int64_t imm = (int64_t)((insn >> 5) & 0x7FFFFu);
             if (imm & 0x40000) imm -= 0x80000;
-            const uint8_t *src = (const uint8_t *)((uintptr_t)pc + (uintptr_t)(imm * 4) + (uintptr_t)delta);
+            const uint8_t *src = data_view(L, pc + imm * 4);
             uint64_t value = (insn & 0x40000000u) ? *(const uint64_t *)src : (uint64_t)*(const uint32_t *)src;
             n += e_mov64(c + n, S, value);
         }
@@ -1246,7 +1289,6 @@ static bool adrp_targets_code(const tl_lib *L, const uint32_t *w, size_t i, size
 
 static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_adr, size_t *n_svc)
 {
-    ptrdiff_t delta = L->rw - L->rx;
     *n_tpidr = *n_adrp = *n_adr = *n_svc = 0;
     /* Only instructions are patched: many libraries put .rodata and .eh_frame in the same
      * executable segment as .text, and a data word that happens to look like an adrp or a
@@ -1269,7 +1311,7 @@ static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_ad
             if (dbg < 0) { const char *e = getenv("TL_X18_RANGE"); dbg = getenv("TL_X18_OFF") ? 1 : 0; if (e) { dbg = 2; sscanf(e, "%llx-%llx", (unsigned long long *)&dbg_lo, (unsigned long long *)&dbg_hi); } }
             uint64_t va = L->code[r].start + (uint64_t)i * 4;
             bool skip_dbg = dbg == 1 || (dbg == 2 && !(va >= dbg_lo && va < dbg_hi));
-            int xr = (is_data || skip_dbg) ? X18_NONE : x18_rewrite(L, &w[i], pc, delta);
+            int xr = (is_data || skip_dbg) ? X18_NONE : x18_rewrite(L, &w[i], pc);
             if (is_data && x18_rewrite_would_apply(insn)) {
                 L->n_x18_data++;
                 if (G.verbosity >= 3) tl_log_line("ld: %s: x18 word %08x at +%#llx left alone", L->name, insn, (unsigned long long)(L->code[r].start + (uint64_t)i * 4));
@@ -1293,7 +1335,7 @@ static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_ad
                     size_t tpg = (tp - (uintptr_t)L->rx) / PAGE;
                     uint64_t tv = (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr;
                     if ((data_page(L, tpg) || writable_range(L, tv, tv + 0x1000)) && !adrp_targets_code(L, w, i, nwords, insn & 0x1Fu, tp)) {
-                        w[i] = encode_adrp(insn & 0x1Fu, pc, (const void *)(tp + (uintptr_t)delta));
+                        w[i] = encode_adrp(insn & 0x1Fu, pc, data_view(L, (const void *)tp));
                         (*n_adrp)++;
                     }
                 }
@@ -1318,7 +1360,7 @@ static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_ad
                     && (data_page(L, (tp - (uintptr_t)L->rx) / PAGE) || writable_vaddr(L, (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr))
                     && !in_code(L, (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr)) {
                     uint32_t branch;
-                    if (adr_stub(L, pc, insn & 0x1Fu, (const uint8_t *)(tp + (uintptr_t)delta), &branch)) { w[i] = branch; (*n_adr)++; }
+                    if (adr_stub(L, pc, insn & 0x1Fu, data_view(L, (const void *)tp), &branch)) { w[i] = branch; (*n_adr)++; }
                     else L->n_adr_failed++;
                 }
             }
@@ -1365,7 +1407,7 @@ static void *tls_block(unsigned module)
         if (posix_memalign(&b, (size_t)al, (size_t)(g_tlsmod[module].memsz + 16)) != 0) return NULL;
         memset(b, 0, (size_t)g_tlsmod[module].memsz);
         const tl_lib *L = g_tlsmod[module].lib;
-        if (g_tlsmod[module].filesz) memcpy(b, L->rw + (g_tlsmod[module].init_vaddr - L->base_vaddr), (size_t)g_tlsmod[module].filesz);
+        if (g_tlsmod[module].filesz) memcpy(b, waddr(L, g_tlsmod[module].init_vaddr - L->base_vaddr), (size_t)g_tlsmod[module].filesz);
         t->blk[module] = b;
     }
     return t->blk[module];
@@ -1451,12 +1493,12 @@ static uint64_t image_addr(const tl_lib *L, uint64_t vaddr)
 {
     uint64_t off = vaddr - L->base_vaddr;
     size_t page = (size_t)(off / PAGE);
-    if (page < L->npages && writable_vaddr(L, vaddr)) return (uint64_t)(uintptr_t)(L->rw + off);
+    if (page < L->npages && writable_vaddr(L, vaddr)) return (uint64_t)(uintptr_t)waddr(L, off);
     if (page < L->npages && data_page(L, page)) {
         if (L->pflags[page] & TL_PAGE_X)
             for (int r = 0; r < L->ncode; r++)
                 if (vaddr >= L->code[r].start && vaddr < L->code[r].end) return (uint64_t)(uintptr_t)(L->rx + off);
-        return (uint64_t)(uintptr_t)(L->rw + off);
+        return (uint64_t)(uintptr_t)waddr(L, off);
     }
     return (uint64_t)(uintptr_t)(L->rx + off);
 }
@@ -1493,11 +1535,31 @@ static uint64_t bind_symbol(tl_lib *L, uint32_t symidx, bool *failed)
     return val;
 }
 
-static bool reloc_one(tl_lib *L, uint64_t r_offset, uint32_t type, uint32_t symidx, int64_t addend)
+/* A copied page's data is relocated in its copy, which is what the rewritten code reads. In an imported dylib the page itself is
+ * mapped too (writable unless it holds code), and code that does not compute its data addresses with adrp/adr -- a literal load in the
+ * same page, a pointer table handed to the unwinder -- reads that one: give it the same relocations, the way the JIT region's two
+ * views of one memory would. */
+static void reloc_both(tl_lib *L, uint64_t off, size_t bytes)
+{
+    if (!mixed_page(L, (size_t)(off / PAGE)) || (L->pflags[off / PAGE] & TL_PAGE_X)) return;   /* executable in the dylib: read-only */
+    if (off + bytes > L->npages * PAGE) return;
+    memcpy(L->rw + off, L->dup + off, bytes);
+}
+
+static bool reloc_one_into(tl_lib *L, uint64_t r_offset, uint32_t type, uint32_t symidx, int64_t addend)
 {
     uint64_t off = r_offset - L->base_vaddr;
     if (off + 8 > L->npages * PAGE) return false;
-    uint64_t *place = (uint64_t *)(L->rw + off);
+    /* An imported dylib maps a code page read-only (it is signed and executable). Nothing writes there: the JIT region's views are one
+     * memory, but a dylib's are not, so a relocation that names a code page stays as the .so has it. A page that shares its data with
+     * code is not code on the data half: it has a writable copy, and the relocation goes there. */
+    if (L->aot && (L->pflags[off / PAGE] & TL_PAGE_X) && !writable_range(L, r_offset, r_offset + 8)) {
+        if (L->n_reloc_code < 8 && G.verbosity >= 2)
+            tl_log_line("ld:   %s: a relocation at +%#llx names a code page (type %u, sym %u, addend %#llx)", L->name, (unsigned long long)off,
+                        type, symidx, (unsigned long long)addend);
+        L->n_reloc_code++; return true;
+    }
+    uint64_t *place = (uint64_t *)waddr(L, off);
     bool failed = false;
     switch (type) {
     case R_NONE:
@@ -1547,10 +1609,17 @@ static bool reloc_one(tl_lib *L, uint64_t r_offset, uint32_t type, uint32_t symi
     }
 }
 
-static bool do_relas(tl_lib *L, uint64_t addr, uint64_t size, size_t *count)
+static bool reloc_one(tl_lib *L, uint64_t r_offset, uint32_t type, uint32_t symidx, int64_t addend)
 {
-    if (!addr || !size) return true;
-    const elf_rela *r = at(L, addr);
+    bool ok = reloc_one_into(L, r_offset, type, symidx, addend);
+    if (ok) reloc_both(L, r_offset - L->base_vaddr, type == R_TLSDESC ? 16 : 8);
+    return ok;
+}
+
+static bool do_relas(tl_lib *L, const uint8_t *table, uint64_t size, size_t *count)
+{
+    if (!table || !size) return true;
+    const elf_rela *r = (const elf_rela *)table;
     for (size_t i = 0; i < size / sizeof(elf_rela); i++) {
         if (!reloc_one(L, r[i].r_offset, (uint32_t)(r[i].r_info & 0xffffffffu),
                        (uint32_t)(r[i].r_info >> 32), r[i].r_addend)) return false;
@@ -1583,7 +1652,7 @@ static bool do_packed(tl_lib *L, size_t *count)
      * own offset delta, info and addend delta as the flags leave them unshared.
      */
     if (!L->arela || !L->arelasz) return true;
-    const uint8_t *d = at(L, L->arela);
+    const uint8_t *d = L->arela_src ? L->arela_src : at(L, L->arela);
     if (memcmp(d, "APS2", 4) != 0) { tl_log_line("ld: %s: packed relocations lack APS2 magic", L->name); return false; }
     sleb s = { d + 4, d + L->arelasz, false };
     int64_t total = rd_sleb(&s);
@@ -1616,19 +1685,19 @@ static bool do_packed(tl_lib *L, size_t *count)
 static bool do_relr(tl_lib *L, size_t *count)
 {
     if (!L->relr || !L->relrsz) return true;
-    const uint8_t *w = at(L, L->relr);
+    const uint8_t *w = L->relr_src ? L->relr_src : at(L, L->relr);
     uint64_t where = 0;
     for (size_t i = 0; i < L->relrsz / 8; i++) {
         uint64_t word = rd64(w + i * 8);
         if (!(word & 1)) {
-            if (!reloc_one(L, word, R_RELATIVE, 0, (int64_t)rd64(L->rw + (word - L->base_vaddr)))) return false;
+            if (!reloc_one(L, word, R_RELATIVE, 0, (int64_t)rd64(waddr(L, word - L->base_vaddr)))) return false;
             (*count)++;
             where = word + 8;
         } else {
             for (unsigned b = 1; b < 64; b++) {
                 if (word & (1ull << b)) {
                     uint64_t a = where + (uint64_t)(b - 1) * 8;
-                    if (!reloc_one(L, a, R_RELATIVE, 0, (int64_t)rd64(L->rw + (a - L->base_vaddr)))) return false;
+                    if (!reloc_one(L, a, R_RELATIVE, 0, (int64_t)rd64(waddr(L, a - L->base_vaddr)))) return false;
                     (*count)++;
                 }
             }
@@ -1667,6 +1736,27 @@ static void parse_dynamic(tl_lib *L, uint64_t dyn_vaddr, uint64_t dyn_size)
         default: break;
         }
     }
+}
+
+/*
+ * An imported library's relocation tables from the .so's own bytes: the dylib was made by patch_library, which puts the island pool's
+ * stubs into the tail of .rela, so its image no longer holds them (the JIT path applies the relocations before that happens).
+ * NULL if the range is not in the file, in which case the image is read as before.
+ */
+static uint8_t *copy_table(const tl_lib *L, const uint8_t *file, size_t flen, uint64_t vaddr, uint64_t bytes)
+{
+    if (!vaddr || !bytes || bytes > (24u << 20)) return NULL;
+    for (unsigned i = 0; i < L->phnum; i++) {
+        const elf_phdr *p = &L->phdr[i];
+        if (p->p_type != PT_LOAD_ || vaddr < p->p_vaddr || vaddr - p->p_vaddr >= p->p_filesz) continue;
+        uint64_t rel = vaddr - p->p_vaddr, off = p->p_offset + rel;
+        if (rel + bytes > p->p_filesz || off + bytes > flen) continue;
+        uint8_t *c = malloc((size_t)bytes);
+        if (!c) return NULL;
+        memcpy(c, file + off, (size_t)bytes);
+        return c;
+    }
+    return NULL;
 }
 
 
@@ -1864,33 +1954,35 @@ static uint8_t *build_data_map(const tl_lib *L, const uint32_t *w, size_t n, uin
 
 /*
  * Ahead-of-time builds (Husk 3.2, tl_ld_aot_build): map_library takes its memory from here instead of the JIT region. One anonymous
- * region of `bytes` at A and a second mapping of the same pages at A + bytes, so the image is patched exactly as in the JIT region,
- * through a writable view a fixed distance away -- the distance a dylib has from its __TEXT image to its __DATA copy.
+ * writable region, so the image is patched exactly as in the JIT region with rw == rx: the code written here is never run (the
+ * dylib is made from the bytes), so every access to data is an access to its own address, which is the address it has in the
+ * dylib too -- the dylib maps each page there, executable pages in a __TEXT segment and data pages in a __DATA one. A mixed page's
+ * writable copy is not in this region: the address the rewrite encodes for it is inside the dylib only (see L->dup), and nothing
+ * here reads or writes it.
  */
 static struct { bool on; vm_address_t base; vm_size_t size; } g_aot;
 
 static bool aot_alloc(size_t bytes, uint8_t **rx, uint8_t **rw)
 {
     vm_address_t a = 0;
-    if (vm_allocate(mach_task_self(), &a, 2 * bytes, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) return false;
-    vm_address_t alias = a + bytes; vm_prot_t cur, max;
-    if (vm_remap(mach_task_self(), &alias, bytes, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), a, FALSE, &cur, &max,
-                 VM_INHERIT_NONE) != KERN_SUCCESS || alias != a + bytes) {
-        vm_deallocate(mach_task_self(), a, 2 * bytes);
-        return false;
-    }
-    g_aot.base = a; g_aot.size = 2 * bytes;
-    *rx = (uint8_t *)(uintptr_t)a; *rw = (uint8_t *)(uintptr_t)alias;
+    if (vm_allocate(mach_task_self(), &a, bytes, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) return false;
+    g_aot.base = a; g_aot.size = bytes;
+    *rx = *rw = (uint8_t *)(uintptr_t)a;
     return true;
 }
 
 /*
- * Importing a library made ahead of time (Husk 3.2): when the folder set with tl_ld_set_aot_dir has <library>.dylib, made by
- * tl_ld_aot_build from this very file, dyld maps it -- signed code, so no executable memory is made here -- and the loader takes
- * its __husk_image as the executable view and its __husk_data as the writable one, then relocates and initialises as usual.
+ * Importing a library made ahead of time (Husk 3.2): when the folder set with tl_ld_set_aot_dir has <library>'s dylib, made by
+ * tl_ld_aot_build from this very file, dyld maps it -- signed code, so no executable memory is made here -- and the loader uses the
+ * image's pages in place: code pages executable, data pages writable at their own addresses. Then it relocates and initialises as usual.
  */
 static char *g_aot_dir;
 void tl_ld_set_aot_dir(const char *dir) { free(g_aot_dir); g_aot_dir = dir && *dir ? strdup(dir) : NULL; }
+
+void tl_aot_file_name(char *out, size_t n, uint64_t hash, const char *lib_name)
+{
+    snprintf(out, n, "aot-v%u-%016llx-%s.dylib", (unsigned)TL_AOT_VERSION, (unsigned long long)hash, lib_name);
+}
 
 static const struct mach_header_64 *dyld_header_of(const char *path)
 {
@@ -1902,65 +1994,72 @@ static const struct mach_header_64 *dyld_header_of(const char *path)
     return NULL;
 }
 
+/* Every page of the image and its stub, slot and thread-block pages lies inside one of the dylib's segments: a layout the loader
+ * can use with one pointer (no page missing, or the first access to it would fault). */
+#define AOT_MAX_SEG 64
+static bool aot_mapped(const struct mach_header_64 *mh, uint64_t off, size_t pages)
+{
+    struct { uint64_t lo, hi; } seg[AOT_MAX_SEG]; int n = 0;
+    const uint8_t *p = (const uint8_t *)(mh + 1); uint32_t left = mh->sizeofcmds;
+    for (uint32_t i = 0; i < mh->ncmds && left >= sizeof(struct load_command); i++) {
+        const struct load_command *lc = (const struct load_command *)p;
+        if (lc->cmdsize < sizeof(*lc) || lc->cmdsize > left) return false;
+        if (lc->cmd == LC_SEGMENT_64 && n < AOT_MAX_SEG) {
+            const struct segment_command_64 *s = (const struct segment_command_64 *)lc;
+            seg[n].lo = s->vmaddr; seg[n].hi = s->vmaddr + s->vmsize; n++;
+        }
+        p += lc->cmdsize; left -= lc->cmdsize;
+    }
+    for (size_t k = 0; k < pages; k++) {
+        uint64_t a = off + k * PAGE, b = a + PAGE;
+        bool in = false;
+        for (int i = 0; i < n && !in; i++) in = seg[i].lo <= a && b <= seg[i].hi;
+        if (!in) return false;
+    }
+    return true;
+}
+
 static bool aot_import(const char *name, const uint8_t *file, size_t flen, uint64_t base_vaddr, size_t npages, size_t nstub,
-                       uint8_t **rx, uint8_t **rw)
+                       size_t n_mixed, const uint8_t *mixed, uint8_t **rx, uint8_t **rw, uint8_t **dup)
 {
     static bool env_read;
     if (!env_read) { env_read = true; if (!g_aot_dir && getenv("TL_AOT_DIR")) tl_ld_set_aot_dir(getenv("TL_AOT_DIR")); }   /* Mac harnesses */
     if (!g_aot_dir) return false;
-    /* aot-<the .so's hash>-<library>.dylib, so dylibs of several versions of a game can sit in one folder (the app's Frameworks);
-     * or <library>.dylib, as the Mac harnesses name them */
+    /* aot-<version>-<the .so's hash>-<library>.dylib, so dylibs of several versions of a game can sit in one folder (the app's
+     * Frameworks); or <library>.dylib, as the Mac harnesses name them */
     uint64_t hash = tl_aot_hash(file, flen);
+    char want[160]; tl_aot_file_name(want, sizeof(want), hash, base_name(name));
     char path[1024]; struct stat st; bool found = false;
     /* g_aot_dir may name several folders, separated by ':' (the app's prebuilt ones, then those made on the device) */
     for (const char *d = g_aot_dir; *d && !found; ) {
         const char *e = strchr(d, ':'); size_t dl = e ? (size_t)(e - d) : strlen(d);
-        snprintf(path, sizeof(path), "%.*s/aot-%016llx-%s.dylib", (int)dl, d, (unsigned long long)hash, base_name(name));
+        snprintf(path, sizeof(path), "%.*s/%s", (int)dl, d, want);
         found = stat(path, &st) == 0;
         if (!found) { snprintf(path, sizeof(path), "%.*s/%s.dylib", (int)dl, d, base_name(name)); found = stat(path, &st) == 0; }
         d = e ? e + 1 : d + dl;
     }
-    if (!found) { tl_log_line("ld: %s: no dylib made ahead of time (aot-%016llx-%s.dylib)", name, (unsigned long long)hash, base_name(name)); return false; }
+    if (!found) { tl_log_line("ld: %s: no dylib made ahead of time (%s)", name, want); return false; }
     void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!h) { tl_log_line("ld: %s: its dylib does not load: %s", name, dlerror()); return false; }
     const struct mach_header_64 *mh = dyld_header_of(path);
-    unsigned long isz = 0, dsz = 0, msz = 0;
-    uint8_t *x = mh ? getsectiondata(mh, "__TEXT", "__husk_image", &isz) : NULL;
-    uint8_t *w = mh ? getsectiondata(mh, "__DATA", "__husk_data", &dsz) : NULL;
+    size_t msz = 0;
     const tl_aot_manifest *M = mh ? (const tl_aot_manifest *)getsectiondata(mh, "__TEXT", "__husk_manifest", &msz) : NULL;
-    size_t size = (npages + nstub + 1) * PAGE;
-    const char *why = !x || !w || !M || msz != sizeof(*M) ? "it is not a Husk library dylib"
+    size_t size = (npages + nstub + 2) * PAGE;
+    /* the image is at its pages' own vaddrs inside the dylib, executable pages in a __TEXT segment and data pages in a __DATA one,
+     * so one pointer reaches both and nothing has to be remapped at run time (iOS refuses that) */
+    uint8_t *x = mh ? (uint8_t *)(uintptr_t)mh + PAGE : NULL;
+    const char *why = !x || !M || msz != sizeof(*M) ? "it is not a Husk library dylib"
                     : memcmp(M->magic, TL_AOT_MAGIC, 8) || M->version != TL_AOT_VERSION || M->page != PAGE ? "it was made by another version of Husk"
                     : M->so_size != flen || M->base_vaddr != base_vaddr || M->npages != npages || M->nstub != nstub || M->size != size
-                      || isz != size || dsz != size || (size_t)(w - x) != size ? "it does not match the library"
-                    : M->so_hash != hash ? "it was made from another version of the library" : NULL;
+                      || M->n_mixed != n_mixed ? "it does not match the library"
+                    : M->so_hash != hash ? "it was made from another version of the library"
+                    : !aot_mapped(mh, PAGE, size / PAGE) ? "its segments do not cover the image" : NULL;
+    /* a writable copy of every data page of a 4 KiB-page library, at the image's size plus the page's index */
+    for (size_t p = 0; !why && p < npages; p++)
+        if (mixed && mixed[p] && !aot_mapped(mh, PAGE + size + p * PAGE, 1)) why = "its segments do not cover the image";
     if (why) { tl_log_line("ld: %s: its dylib is not used: %s", name, why); return false; }   /* (it stays loaded: dyld cannot be asked to forget it safely) */
-    *rx = x; *rw = w;
+    *rx = x; *rw = x; *dup = n_mixed ? x + size : NULL;
     return true;
-}
-
-/* After an import, every page of the image that holds no code is mapped a second time over the same page of the code view, so data
- * read at a code-view address is the relocated data, as in the JIT region where both views are one memory. Code reaches read-only
- * relocated data that way (the GOT and .data.rel.ro after RELRO, which the adrp rewrite leaves pointing at the code view), and so
- * does the unwinder (.eh_frame and .gcc_except_table reach the personality routine and typeinfo through pointers in .data). Pages
- * that hold code too cannot be shared (they must stay executable and signed); data read there at code addresses is the file's. */
-static void aot_alias_data(tl_lib *L)
-{
-    size_t shared = 0, failed = 0, mixed = 0;
-    for (size_t p = 0; p < L->npages; ) {
-        if (L->pflags[p] & TL_PAGE_X) { if (L->pflags[p] & TL_PAGE_W) mixed++; p++; continue; }
-        size_t q = p; while (q < L->npages && !(L->pflags[q] & TL_PAGE_X)) q++;
-        vm_address_t at = (vm_address_t)(L->rx + p * PAGE); vm_prot_t cur, max;
-        kern_return_t kr = vm_remap(mach_task_self(), &at, (q - p) * PAGE, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
-                                    (vm_address_t)(L->rw + p * PAGE), FALSE, &cur, &max, VM_INHERIT_NONE);
-        if (kr == KERN_SUCCESS && at == (vm_address_t)(L->rx + p * PAGE)) shared += q - p;
-        else { failed += q - p; tl_log_line("ld: %s: data pages %zu-%zu could not be shared with the code view (%d)", L->name, p, q - 1, kr); }
-        p = q;
-    }
-    if (G.verbosity >= 1)
-        tl_log_line("ld: %s: imported from its dylib (no executable memory made); %zu data pages shared, %zu hold code and writable data", L->name,
-                    shared, mixed);
-    (void)failed;
 }
 
 /* What the library's position-independent code reads at run time: the stub pages' data slots and the thread block. Written through the
@@ -1968,8 +2067,8 @@ static void aot_alias_data(tl_lib *L)
 static void fill_data_slots(tl_lib *L)
 {
     uint64_t svc = (uint64_t)(uintptr_t)tl_svc_common, vx18 = (uint64_t)(g_vx18_off < 0 ? 0 : g_vx18_off);
-    memcpy(L->stub_rw + SLOT_SVC, &svc, 8);
-    memcpy(L->stub_rw + SLOT_VX18, &vx18, 8);
+    memcpy(L->slots + SLOT_SVC, &svc, 8);
+    memcpy(L->slots + SLOT_VX18, &vx18, 8);
     uint64_t *t = (uint64_t *)L->tcb;
     t[0] = (uint64_t)(uintptr_t)L->tcb;       /* self */
     t[1] = 1000; t[2] = 1000;
@@ -2071,6 +2170,53 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
         }
     }
 
+    /*
+     * Which pages' data a dylib keeps in a writable copy of its own (mixed_page): a library built for 4 KiB pages has a 16 KiB page
+     * that holds the end of its code and the start of its .data.rel.ro (or GOT); the dylib must make that page executable, so the
+     * data on it lives in a copy after the image, and the rewritten code names the copy. Once anything has to be copied, every
+     * writable data page is: the copies keep the image's page numbering, so an address into a copied page plus an offset stays on the
+     * right copied page. (With only the shared page copied, a GOT entry naming a vtable header on the last bytes of it, plus the 0x10
+     * that reaches the entries, landed one page past the copy, in __LINKEDIT: Geometry Dash's libfmod, build 3.2.)
+     */
+    uint8_t *mix = calloc(npages ? npages : 1, 1);
+    size_t n_mixed = 0, n_shared = 0;
+    if (!mix) { tl_log_line("ld: %s: out of memory", name); free(flags); free(phs); return NULL; }
+    {
+        /* writable_range()'s answer for a whole page: it holds an address that is inside a writable PT_LOAD, in no read-only PT_LOAD and
+         * in no executable section. */
+        struct rng { uint64_t lo, hi; } wr[16], blk[32];
+        int nwr = 0, nblk = 0;
+        for (unsigned i = 0; i < eh->e_phnum; i++) {
+            if (phs[i].p_type != PT_LOAD_ || !phs[i].p_memsz) continue;
+            struct rng r = { phs[i].p_vaddr, phs[i].p_vaddr + phs[i].p_memsz };
+            if (phs[i].p_flags & PF_W_) { if (nwr < 16) wr[nwr++] = r; }
+            else if (nblk < 32) blk[nblk++] = r;
+        }
+        for (int r = 0; r < ncode && nblk < 32; r++) { blk[nblk].lo = code[r].vaddr; blk[nblk].hi = code[r].vaddr + code[r].size; nblk++; }
+        for (int i = 1; i < nblk; i++)
+            for (int j = i; j > 0 && blk[j].lo < blk[j - 1].lo; j--) { struct rng t = blk[j]; blk[j] = blk[j - 1]; blk[j - 1] = t; }
+        for (size_t p = 0; p < npages; p++) {
+            uint64_t lo = base_vaddr + p * PAGE, hi = lo + PAGE;
+            bool w = false;
+            for (int r = 0; r < nwr && !w; r++) {
+                uint64_t a = wr[r].lo > lo ? wr[r].lo : lo, b = wr[r].hi < hi ? wr[r].hi : hi;
+                for (int k = 0; k < nblk && a < b; k++) {
+                    if (blk[k].hi <= a) continue;
+                    if (blk[k].lo > a) { w = true; break; }      /* [a, blk[k].lo) is writable data */
+                    a = blk[k].hi;                               /* the blocker covers a */
+                }
+                if (a < b) w = true;
+            }
+            if (!w) continue;
+            mix[p] = 1; n_mixed++;
+            if (flags[p] & TL_PAGE_X) n_shared++;
+        }
+        if (!n_shared) { memset(mix, 0, npages); n_mixed = 0; }   /* code and data on separate pages: relocated in place */
+    }
+    if (n_mixed) tl_log_line("ld: %s: %zu page%s hold%s code and writable data both (built for 4 KiB pages), so its %zu data page%s "
+                             "are copied after the image", name, n_shared, n_shared == 1 ? "" : "s", n_shared == 1 ? "s" : "",
+                             n_mixed, n_mixed == 1 ? "" : "s");
+
     /* Go's build info marks a Go library (see tl_lib.go_data) */
     static const char go_magic[] = "\xff Go buildinf:";
     bool go = memmem(file, flen, go_magic, sizeof(go_magic) - 1) != NULL;
@@ -2096,27 +2242,28 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
     size_t nstub = (stub_bytes + PAGE - 1) / PAGE;
     if (!vx18_init()) tl_log_line("ld: no thread-specific slot for the virtual x18; instructions using x18 will not be rewritten");
 
-    uint8_t *rx, *rw;
-    bool imported = !g_aot.on && aot_import(name, file, flen, base_vaddr, npages, nstub, &rx, &rw);
-    /* the image, its stub pages, and a page for its thread block */
+    uint8_t *rx, *rw, *dup = NULL;
+    bool imported = !g_aot.on && aot_import(name, file, flen, base_vaddr, npages, nstub, n_mixed, mix, &rx, &rw, &dup);
+    /* the image, its stub pages, a page of run-time values for the stubs, and a page for its thread block */
     if (imported) {
-        /* dyld mapped the image (__husk_data is the file's, .bss included) and the zero stub and thread-block pages */
-    } else if (g_aot.on ? !aot_alloc((npages + nstub + 1) * PAGE, &rx, &rw) : !tl_xmem_alloc((npages + nstub + 1) * PAGE, &rx, &rw)) {
+        /* dyld mapped all of it: the image's pages at their own addresses, executable or writable as the segment says, the stub,
+         * slot and thread-block pages zero, and the mixed pages' writable copies after them */
+    } else if (g_aot.on ? !aot_alloc((npages + nstub + 2) * PAGE, &rx, &rw) : !tl_xmem_alloc((npages + nstub + 2) * PAGE, &rx, &rw)) {
         tl_log_line("ld: %s needs %zu MiB of executable memory and the region has %zu MiB left", name,
                     npages * PAGE >> 20, (tl_xmem_size() - tl_xmem_used()) >> 20);
-        free(flags); free(phs);
+        free(flags); free(mix); free(phs);
         return NULL;
     }
     /* The region's pages are not guaranteed zero (StikDebug writes a byte into each),
      * and .bss has to be. */
-    if (!imported) memset(rw, 0, (npages + nstub + 1) * PAGE);
+    if (!imported) memset(rw, 0, (npages + nstub + 2) * PAGE);
     for (unsigned i = 0; i < eh->e_phnum && !imported; i++) {
         const elf_phdr *p = &phs[i];
         if (p->p_type != PT_LOAD_ || !p->p_filesz) continue;
         if (p->p_offset + p->p_filesz > flen || p->p_vaddr < base_vaddr
             || p->p_vaddr - base_vaddr + p->p_filesz > npages * PAGE) {
             tl_log_line("ld: %s: segment %u is outside the file or the image", name, i);
-            free(flags); free(phs);
+            free(flags); free(mix); free(phs);
             return NULL;
         }
         memcpy(rw + (p->p_vaddr - base_vaddr), file + p->p_offset, p->p_filesz);
@@ -2124,7 +2271,14 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
 
     tl_lib *L = calloc(1, sizeof(*L));
     snprintf(L->name, sizeof(L->name), "%s", name);
-    L->rx = rx; L->rw = rw; L->base_vaddr = base_vaddr; L->npages = npages; L->pflags = flags;
+    L->rx = rx; L->rw = rw; L->base_vaddr = base_vaddr; L->npages = npages; L->pflags = flags; L->mixed = mix;
+    L->size = (npages + nstub + 2) * PAGE;
+    /* A copied page's writable copy is at the image's size plus the page's index: the loader relocates it and the rewritten code reads
+     * it (waddr). When the dylib is made, the copy is not in the build region: the address only has to encode correctly, since the
+     * rewrite is a difference of two addresses inside the image and the image is built wherever it lands. */
+    L->dup = imported ? dup : (g_aot.on && n_mixed ? rx + L->size : NULL);
+    L->n_mixed = n_mixed;
+    L->build = g_aot.on;
     L->go_data = go;
     if (go) tl_log_line("ld: %s is a Go library: its read-only data is reached through the writable view too", name);
     L->phdr = phs; L->phnum = eh->e_phnum;
@@ -2138,11 +2292,12 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
     for (int r = 0; r < ncode; r++) { L->code[r].start = code[r].vaddr; L->code[r].end = code[r].vaddr + code[r].size; }
     L->ncode = ncode;
     L->stub_rx = rx + npages * PAGE; L->stub_rw = rw + npages * PAGE; L->stub_used = 16; L->stub_cap = nstub * PAGE; L->nstub = nstub;
-    L->tcb = rw + (npages + nstub) * PAGE;
+    /* In the JIT region the slots ride in the stub pages' writable view; a dylib has a page of its own after the stubs, because its
+     * stub pages execute and a page cannot be both executable and writable. */
+    L->slots = (imported || g_aot.on) ? rw + (npages + nstub) * PAGE : L->stub_rw;
+    L->tcb = rw + (npages + nstub + 1) * PAGE;
     fill_data_slots(L);
     L->aot = imported;
-    /* TL_AOT_NO_ALIAS=1: leave the data pages unshared, as iOS does (it refuses the remap), to see on a Mac what a phone sees */
-    if (imported && !getenv("TL_AOT_NO_ALIAS")) aot_alias_data(L);
     parse_dynamic(L, dyn_v, dyn_n);
     if (L->strtab) {
         const elf_dyn *d = at(L, dyn_v);
@@ -2151,6 +2306,12 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
         }
     }
     if (!L->soname[0]) snprintf(L->soname, sizeof(L->soname), "%s", name);
+    if (imported) {
+        L->rela_src = copy_table(L, file, flen, L->rela, L->relasz);
+        L->jmprel_src = copy_table(L, file, flen, L->jmprel, L->pltrelsz);
+        L->arela_src = copy_table(L, file, flen, L->arela, L->arelasz);
+        L->relr_src = copy_table(L, file, flen, L->relr, L->relrsz);
+    }
     L->nsyms = count_dynsyms(L);
     L->ncache = dynsym_bound(L, L->nsyms);
     if (L->ncache) L->symcache = calloc(L->ncache, sizeof(uint64_t));
@@ -2235,10 +2396,7 @@ static void patch_library(tl_lib *L, size_t *t, size_t *a, size_t *ad, size_t *s
 {
     /* The relocation table is dead now that the image is relocated. Its tail becomes a second pool of stubs, for the
      * sites that are out of branch range of the stub pages after a very large image. */
-    if (island(L)) {
-        memset(L->isl_rw, 0, L->isl_cap);
-        uint64_t h = (uint64_t)(uintptr_t)tl_svc_common; memcpy(L->isl_rw + SLOT_SVC, &h, 8);
-    }
+    if (island(L)) memset(L->isl_rw, 0, L->isl_cap);
     mono_aot_code_only(L);
     patch_image(L, t, a, ad, sv);
     skip_boringssl_selfcheck(L);
@@ -2248,18 +2406,28 @@ static bool relocate(tl_lib *L)
 {
     size_t count = 0;
     L->state = 1;
-    bool ok = do_relas(L, L->rela, L->relasz, &count)
-           && do_relas(L, L->jmprel, L->pltrelsz, &count)
+    bool ok = do_relas(L, L->rela_src ? L->rela_src : (const uint8_t *)at(L, L->rela), L->relasz, &count)
+           && do_relas(L, L->jmprel_src ? L->jmprel_src : (const uint8_t *)at(L, L->jmprel), L->pltrelsz, &count)
            && do_packed(L, &count)
            && do_relr(L, &count);
+    free(L->rela_src); L->rela_src = NULL;
+    free(L->jmprel_src); L->jmprel_src = NULL;
+    free(L->arela_src); L->arela_src = NULL;
+    free(L->relr_src); L->relr_src = NULL;
     free(L->symcache);
     L->symcache = NULL;
     if (!ok) { tl_log_line("ld: %s: relocation failed", L->name); return false; }
     size_t t = 0, a = 0, ad = 0, sv = 0;
     if (L->aot) {
-        /* the code was rewritten when the dylib was made; only the island pool's data slot is this process's */
-        if (island(L)) { uint64_t h = (uint64_t)(uintptr_t)tl_svc_common; memcpy(L->isl_rw + SLOT_SVC, &h, 8); }
+        /* The code was rewritten when the dylib was made, and the slots the stubs read are this process's (map_library filled
+         * them). The image's data pages are writable at their own addresses, so all but code pages took their relocations; a code
+         * page a relocation names stays as the .so has it. A library built for 4 KiB pages has its data in copies after the image,
+         * and reloc_one wrote each relocation there and on the page itself. */
         L->state = 2;
+        if (G.verbosity >= 1) {
+            tl_log_line("ld: %-36s imported from its dylib (no executable memory made)", L->name);
+            if (L->n_reloc_code) tl_log_line("ld:   %s: %zu relocations name code pages and were not applied", L->name, L->n_reloc_code);
+        }
         return true;
     }
     patch_library(L, &t, &a, &ad, &sv);
@@ -2445,21 +2613,35 @@ bool tl_ld_aot_build(const char *name, const uint8_t *file, size_t flen, tl_ld_a
         if (g_aot.base) vm_deallocate(mach_task_self(), g_aot.base, g_aot.size);
         return false;
     }
-    size_t size = (L->npages + L->nstub + 1) * PAGE;
+    size_t size = (L->npages + L->nstub + 2) * PAGE;
     out->size = size; out->base_vaddr = L->base_vaddr; out->npages = L->npages; out->nstub = L->nstub;
     size_t t = 0, a = 0, ad = 0, sv = 0;
     patch_library(L, &t, &a, &ad, &sv);
-    /* The data slots and the thread block were filled through the data view, which in this build is the same memory: in the dylib
-     * they belong to __DATA (filled at run time), and in __TEXT they would only be addresses of this process. */
-    memset(L->rw + L->npages * PAGE + SLOT_SVC, 0, 16);
-    memset(L->rw + (L->npages + L->nstub) * PAGE, 0, PAGE);
-    if (L->isl_rw) memset(L->isl_rw + SLOT_SVC, 0, 8);
+    /* The slots and the thread block are filled at run time; in the dylib's file their pages hold zeros. */
+    memset(L->rw + (L->npages + L->nstub) * PAGE, 0, 2 * PAGE);
+    /* What the dylib does with each page: bit 1, executable; bit 2, its data has a writable copy after the image (mixed_page). A page
+     * with neither is a data page, mapped writable at its own address, so data read at a code address is the relocated data without
+     * any remapping -- unless it has a copy. Pages that hold code and writable data both (a library built for 4 KiB pages) have bit 1
+     * and bit 2: code stays executable at the page's address, the data is read from the copy. */
+    out->page_count = size / PAGE;
+    out->page_class = malloc(out->page_count);
+    if (!out->page_class) { free(L->symcache); free(L->pflags); free(L->mixed); free(L->phdr); free(L->fde_start); free(L->fde_end); free(L);
+                            pthread_mutex_unlock(&g_big); vm_deallocate(mach_task_self(), g_aot.base, g_aot.size);
+                            snprintf(out->err, sizeof(out->err), "out of memory"); return false; }
+    for (size_t p = 0; p < L->npages; p++)
+        out->page_class[p] = (uint8_t)(((L->pflags[p] & TL_PAGE_X) ? 1 : 0) | (L->mixed && L->mixed[p] ? 2 : 0));
+    if (L->isl_rx) {
+        size_t p0 = (size_t)(L->isl_rx - L->rx) / PAGE, p1 = (size_t)(L->isl_rx - L->rx + L->isl_cap + PAGE - 1) / PAGE;
+        for (size_t p = p0; p < p1 && p < L->npages; p++) out->page_class[p] |= 1;
+    }
+    for (size_t p = L->npages; p < L->npages + L->nstub; p++) out->page_class[p] = 1;    /* the stub pages: code */
+    for (size_t p = L->npages + L->nstub; p < out->page_count; p++) out->page_class[p] = 0;   /* slots and thread block: data */
     out->text = L->rx;
     out->region = (void *)(uintptr_t)g_aot.base; out->region_size = g_aot.size;
-    for (size_t p = 0; p < L->npages; p++) if ((L->pflags[p] & TL_PAGE_W) && (L->pflags[p] & TL_PAGE_X)) out->n_mixed++;
+    out->n_mixed = L->n_mixed;
     out->n_x18 = L->n_x18; out->n_x18_failed = L->n_x18_failed; out->n_svc = sv; out->n_svc_far = L->n_svc_far;
     out->n_adrp = a; out->n_adr = ad; out->n_tpidr = t; out->n_adr_failed = L->n_adr_failed;
-    free(L->symcache); free(L->pflags); free(L->phdr); free(L->fde_start); free(L->fde_end); free(L);
+    free(L->symcache); free(L->pflags); free(L->mixed); free(L->phdr); free(L->fde_start); free(L->fde_end); free(L);
     pthread_mutex_unlock(&g_big);
     return true;
 }
@@ -2476,5 +2658,6 @@ uint64_t tl_aot_hash(const uint8_t *p, size_t n)
 void tl_ld_aot_free(tl_ld_aot_image *img)
 {
     if (img->region) vm_deallocate(mach_task_self(), (vm_address_t)(uintptr_t)img->region, img->region_size);
-    img->region = NULL; img->text = NULL;
+    free(img->page_class);
+    img->region = NULL; img->text = NULL; img->page_class = NULL; img->page_count = 0;
 }

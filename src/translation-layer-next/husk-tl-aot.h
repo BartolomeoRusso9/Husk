@@ -6,15 +6,19 @@
  * needs executable memory iOS only grants to a debugged process. A dylib is code iOS runs once it is signed, so the loader's own
  * mapping and rewriting (tl_ld_aot_build) run ahead of time and the result is written as one:
  *
- *   __TEXT  r-x   the Mach-O header with the manifest (__husk_manifest), padded to 16 KiB, then __husk_image: the image at its own
- *                 vaddr layout with every code rewrite applied, its stub pages and a thread-block page
- *   __DATA  rw-   __husk_data: the image as the file has it, the rest zero -- relocated at run time; the stubs' data slots and the
- *                 thread block, which the loader fills
+ *   __TEXT        the Mach-O header and the manifest (__husk_manifest), padded to 16 KiB; r-x
+ *   __TEXT_EXEC   a run of the image's executable pages, at the vaddrs they have in the image, every code rewrite applied; r-x
+ *                 (one segment per run: a 16 KiB page belongs to the image's code or its data, never both, in a 16 KiB-aligned library)
+ *   __DATA        a run of the image's data pages, at those same vaddrs; rw. Relocated at run time, in place: a page the code reads
+ *                 at its own address is the page the loader writes. The stubs' data page and the thread block follow the image.
+ *   __DATA_n      a library built for 4 KiB pages: copies of its data pages, at the image's size plus the page's index; rw. The
+ *                 pages that hold code keep their code at their own address (executable); every data access names the copy, and the
+ *                 copies keep the image's numbering so an address that crosses a page boundary stays in them.
  *   __LINKEDIT    empty fixups, export trie and symbol table (dyld wants them); a code signature is added by whoever signs it
  *
- * The distance from __husk_image to __husk_data is the image's size, the delta the rewrites were made for; dyld keeps segment
- * distances, so the patched code finds its data wherever the dylib is loaded. The loader imports such a dylib from the folder given
- * to tl_ld_set_aot_dir (see husk-tl-ld.h).
+ * Because every page keeps the address it has in the image (every page a mixed page's data access can reach), the code needs no
+ * delta between a code view and a data view: the rewrites address data at its own address, exactly as they do in the JIT region. The
+ * loader imports such a dylib from the folder given to tl_ld_set_aot_dir (see husk-tl-ld.h).
  */
 #ifndef HUSK_TL_AOT_H
 #define HUSK_TL_AOT_H
@@ -39,7 +43,7 @@ bool tl_aot_make_dylib(const char *name, const uint8_t *file, size_t flen, const
 
 /*
  * Get an app ready to run with no JIT: every arm64 library in its APKs (the .so files under lib/arm64-v8a; the first APK that has a library wins,
- * as the loader's search does) as a dylib in cache_dir, aot-<hash>-<library>.dylib, signed with the developer certificate in p12
+ * as the loader's search does) as a dylib in cache_dir, aot-v<version>-<hash>-<library>.dylib, signed with the developer certificate in p12
  * (husk-tl-codesign.h). A dylib already there is only signed again when cert_tag (any string naming the certificate) differs from
  * the one it was signed with, which is kept beside it in <dylib>.signer. progress (optional) is called before each library.
  * An entry of apks ending in .so is a library file itself (the Java runtime's own natives).
