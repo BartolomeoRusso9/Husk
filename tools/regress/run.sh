@@ -59,6 +59,8 @@ while IFS='|' read -r name harness apk secs size env expect; do
         fi
         jitless="TL_NO_XMEM=1 TL_AOT_DIR=$CACHE/aot"
         [ "${HUSK_REGRESS_NO_ALIAS:-0}" = 1 ] && jitless="$jitless TL_AOT_NO_ALIAS=1"
+        # JIT-less runs reach their first screen more slowly (dylibs mapped from disk, nothing warmed up); give them more time
+        secs=$((secs * 3 / 2 + 10))
     fi
     shot="$OUT/$name.png"; log="$OUT/$name.log"; ctl="$OUT/$name.ctl"; rm -f "$shot"
     printf "wait %d\nshot %s\nquit\n" $((secs * 1000)) "$shot" > "$ctl"

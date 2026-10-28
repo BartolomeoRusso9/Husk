@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <TargetConditionals.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #define PAGE ((uint64_t)16384)
 #define ROUND_UP(x) (((x) + PAGE - 1) & ~(PAGE - 1))
@@ -200,6 +201,116 @@ static bool write_text(const char *path, const char *text)
     bool ok = fputs(text, f) >= 0; return fclose(f) == 0 && ok;
 }
 
+/* Some APKs ship a library as gzip data and unpack it at run time (pysolfc's libpybundle.so); convert what the game will load,
+ * so the hash in the dylib's name is the hash of the file the game writes out. */
+static uint8_t *gunzip(const uint8_t *src, size_t n, size_t *out_len)
+{
+    z_stream z = {0};
+    if (inflateInit2(&z, 15 + 32) != Z_OK) return NULL;      /* gzip or zlib header */
+    size_t cap = n * 3 + 65536, have = 0;
+    uint8_t *b = malloc(cap);
+    z.next_in = (Bytef *)src; z.avail_in = (uInt)n;
+    while (b) {
+        if (have == cap) {
+            size_t nc = cap + cap / 2 + 65536;
+            uint8_t *nb = realloc(b, nc);
+            if (!nb) { free(b); b = NULL; break; }
+            b = nb; cap = nc;
+        }
+        size_t room = cap - have; if (room > 0x40000000u) room = 0x40000000u;
+        z.next_out = b + have; z.avail_out = (uInt)room;
+        int r = inflate(&z, Z_NO_FLUSH);
+        have += room - z.avail_out;
+        if (r == Z_STREAM_END) break;
+        if (r != Z_OK) { free(b); b = NULL; break; }
+    }
+    inflateEnd(&z);
+    if (b) *out_len = have;
+    return b;
+}
+
+static bool is_arm64_elf(const uint8_t *p, size_t n)
+{
+    return n >= 20 && p[0] == 0x7f && p[1] == 'E' && p[2] == 'L' && p[3] == 'F'
+        && p[4] == 2 && p[5] == 1 && p[18] == 0xb7 && p[19] == 0x00;   /* 64-bit, little-endian, EM_AARCH64 */
+}
+
+/* Converts one library into the cache, or leaves a non-library alone. 1 = done (or already there), 0 = not a library,
+ * -1 = failed (err has the reason). */
+static int prepare_one(const char *name, const uint8_t *data, size_t len, const char *cache_dir, const uint8_t *p12,
+                       size_t p12_len, const char *password, const char *cert_tag, char *err, size_t errlen)
+{
+    if (!is_arm64_elf(data, len)) {
+        tl_log_line("aot: %s is not an arm64 ELF library, left alone", name);
+        return 0;
+    }
+    char path[1200], signer[1220], tag[256] = "";
+    char dylib[160]; tl_aot_file_name(dylib, sizeof(dylib), tl_aot_hash(data, len), name);
+    snprintf(path, sizeof(path), "%s/%s", cache_dir, dylib);
+    snprintf(signer, sizeof(signer), "%s.signer", path);
+    struct stat st;
+    bool have = stat(path, &st) == 0, signed_now = have && read_text(signer, tag, sizeof(tag)) && cert_tag && !strcmp(tag, cert_tag);
+    char e2[200] = "";
+    bool ok = true;
+    if (!have) {
+        tl_log_line("aot: converting %s (%zu KiB)", name, len >> 10);
+        ok = tl_aot_make_dylib(name, data, len, path, TARGET_OS_IPHONE, NULL, e2, sizeof(e2));   /* for the platform this runs on */
+    }
+    if (ok && !signed_now) {
+        unlink(signer);
+        ok = husk_codesign_dylib(path, p12, p12_len, password, e2, sizeof(e2));
+        if (ok && cert_tag) write_text(signer, cert_tag);
+        if (ok) tl_log_line("aot: %s signed", name);
+    }
+    if (!ok) { snprintf(err, errlen, "%s: %s", name, e2); unlink(path); return -1; }
+    return 1;
+}
+
+/* Python-for-android games ship their extension modules in a gzip'd tar that is named like a library (pysolfc's
+ * libpybundle.so); the game writes the tar out and loads the modules, so convert the libraries inside it too. The dylib's name
+ * only uses the file name, which is the same at run time. */
+static size_t tar_octal(const uint8_t *p, size_t n)
+{
+    size_t v = 0, i = 0;
+    while (i < n && (p[i] == ' ' || p[i] == 0)) i++;
+    for (; i < n && p[i] >= '0' && p[i] <= '7'; i++) v = v * 8 + (size_t)(p[i] - '0');
+    return v;
+}
+static int prepare_tar(const uint8_t *t, size_t n, const char *what, const char *cache_dir, const uint8_t *p12, size_t p12_len,
+                       const char *password, const char *cert_tag, char *err, size_t errlen)
+{
+    int done = 0; size_t off = 0; char longname[256] = "";
+    while (off + 512 <= n) {
+        const uint8_t *h = t + off;
+        if (!h[0]) break;                                     /* the zero blocks that end the archive */
+        char name[512] = "";
+        if (longname[0]) { snprintf(name, sizeof(name), "%s", longname); longname[0] = 0; }
+        else {
+            size_t pfx = 0; while (pfx < 155 && h[345 + pfx]) pfx++;
+            if (pfx) snprintf(name, sizeof(name), "%.*s/%.100s", (int)pfx, (const char *)h + 345, (const char *)h);
+            else snprintf(name, sizeof(name), "%.100s", (const char *)h);
+        }
+        size_t size = tar_octal(h + 124, 12);
+        char type = h[156] ? (char)h[156] : '0';
+        off += 512;
+        if (size > n - off) break;
+        if (type == 'L') {                                    /* GNU long name, the next header's */
+            snprintf(longname, sizeof(longname), "%.*s", (int)(size < sizeof(longname) - 1 ? size : sizeof(longname) - 1), t + off);
+        } else if (type == '0' || type == '7') {
+            const char *base = strrchr(name, '/'); base = base ? base + 1 : name;
+            size_t bl = strlen(base);
+            if (bl > 3 && !strcmp(base + bl - 3, ".so") && is_arm64_elf(t + off, size)) {
+                int r = prepare_one(base, t + off, size, cache_dir, p12, p12_len, password, cert_tag, err, errlen);
+                if (r < 0) return -1;
+                done += r;
+            }
+        }
+        off += (size + 511) & ~(size_t)511;
+    }
+    tl_log_line("aot: %s is a tar of Android libraries; %d converted from it", what, done);
+    return done;
+}
+
 int husk_aot_prepare(const char *const *apks, int napks, const char *cache_dir, const uint8_t *p12, size_t p12_len,
                      const char *password, const char *cert_tag, tl_aot_progress_fn progress, void *user, char *err, size_t errlen)
 {
@@ -250,27 +361,26 @@ int husk_aot_prepare(const char *const *apks, int napks, const char *cache_dir, 
         } else if (!tl_zip_data(&z[libs[k].apk], libs[k].e, (size_t)1 << 31, &data, &len, &owned, zerr, sizeof(zerr))) {
             snprintf(err, errlen, "%s: %s", libs[k].name, zerr); ready = -1; goto out;
         }
-        char path[1200], signer[1220], tag[256] = "";
-        char dylib[160]; tl_aot_file_name(dylib, sizeof(dylib), tl_aot_hash(data, len), libs[k].name);
-        snprintf(path, sizeof(path), "%s/%s", cache_dir, dylib);
-        snprintf(signer, sizeof(signer), "%s.signer", path);
-        struct stat st;
-        bool have = stat(path, &st) == 0, signed_now = have && read_text(signer, tag, sizeof(tag)) && cert_tag && !strcmp(tag, cert_tag);
-        char e2[200] = "";
-        bool ok = true;
-        if (!have) {
-            tl_log_line("aot: converting %s (%zu KiB)", libs[k].name, len >> 10);
-            ok = tl_aot_make_dylib(libs[k].name, data, len, path, TARGET_OS_IPHONE, NULL, e2, sizeof(e2));   /* for the platform this runs on */
+        if (len > 2 && data[0] == 0x1f && data[1] == 0x8b) {
+            size_t ulen = 0;
+            uint8_t *u = gunzip(data, len, &ulen);
+            if (!u) { if (owned) free((void *)data); snprintf(err, errlen, "%s: gzip data could not be unpacked", libs[k].name); ready = -1; goto out; }
+            tl_log_line("aot: %s is gzip data (%zu KiB), %zu KiB unpacked", libs[k].name, len >> 10, ulen >> 10);
+            if (owned) free((void *)data);
+            data = u; len = ulen; owned = true;
+        }
+        int r;
+        if (is_arm64_elf(data, len))
+            r = prepare_one(libs[k].name, data, len, cache_dir, p12, p12_len, password, cert_tag, err, errlen);
+        else if (len > 512 && !memcmp(data + 257, "ustar", 5))
+            r = prepare_tar(data, len, libs[k].name, cache_dir, p12, p12_len, password, cert_tag, err, errlen);
+        else {
+            tl_log_line("aot: %s is not an arm64 ELF library, left alone", libs[k].name);
+            r = 0;
         }
         if (owned) free((void *)data);
-        if (ok && !signed_now) {
-            unlink(signer);
-            ok = husk_codesign_dylib(path, p12, p12_len, password, e2, sizeof(e2));
-            if (ok && cert_tag) write_text(signer, cert_tag);
-            if (ok) tl_log_line("aot: %s signed", libs[k].name);
-        }
-        if (!ok) { snprintf(err, errlen, "%s: %s", libs[k].name, e2); unlink(path); ready = -1; goto out; }
-        ready++;
+        if (r < 0) { ready = -1; goto out; }
+        ready += r;
     }
     if (progress) progress(user, nlibs, nlibs, NULL);
 out:
