@@ -111,6 +111,36 @@ void tl_ld_set_verbosity(int v);
 /* The program's own argv/envp for initialisers. Optional. */
 void tl_ld_set_environment(char **argv, char **envp);
 
+/*
+ * Ahead of time (Husk 3.2): an arm64 library mapped and patched the way the loader does it, for a Mach-O dylib that runs with no
+ * executable memory made at run time. `text` is the image with every code rewrite applied, then its stub pages and its thread-block
+ * page; `data` is the image as the file has it (relocated at run time), the rest zero. Both are `size` bytes, and `size` is also the
+ * distance the dylib must keep from `text` to `data`. Free with tl_ld_aot_free.
+ */
+typedef struct tl_ld_aot_image {
+    uint8_t *text, *data;
+    size_t size;
+    uint64_t base_vaddr;               /* the vaddr at the start of the image */
+    size_t npages, nstub;              /* 16 KiB pages of image and of stubs (one thread-block page follows the stubs) */
+    size_t n_mixed;                    /* pages holding code and writable data (4 KiB-aligned libraries): data read at code addresses there is not relocated */
+    size_t n_x18, n_x18_failed, n_svc, n_svc_far, n_adrp, n_adr, n_adr_failed, n_tpidr;
+    char err[160];
+} tl_ld_aot_image;
+bool tl_ld_aot_build(const char *name, const uint8_t *file, size_t flen, tl_ld_aot_image *out);
+
+/* What a dylib made from a library records about it (section __TEXT,__husk_manifest), so the loader only imports a dylib that was
+ * made from this exact file by a compatible loader. */
+#define TL_AOT_MAGIC   "HUSKAOT1"
+#define TL_AOT_VERSION 1u
+typedef struct tl_aot_manifest {
+    char magic[8];
+    uint32_t version, page;            /* TL_AOT_VERSION; 16384 */
+    uint64_t so_hash, so_size;         /* tl_aot_hash of the .so, and its size */
+    uint64_t base_vaddr, npages, nstub, size;   /* as tl_ld_aot_image */
+} tl_aot_manifest;
+uint64_t tl_aot_hash(const uint8_t *p, size_t n);
+void tl_ld_aot_free(tl_ld_aot_image *img);
+
 #ifdef __cplusplus
 }
 #endif

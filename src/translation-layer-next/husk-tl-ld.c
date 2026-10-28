@@ -3,6 +3,8 @@
 
 #include <errno.h>
 #include <libkern/OSCacheControl.h>
+#include <mach/mach.h>
+#include <mach/vm_map.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -74,7 +76,8 @@ struct tl_lib {
     int ndeps;
     bool deps_ready;
 
-    uint8_t *stub_rx, *stub_rw;    /* pages after the image: stubs for rewritten `svc` and x18 sites */
+    uint8_t *stub_rx, *stub_rw;    /* pages after the image: stubs for rewritten `svc` and x18 sites; their first 16 bytes are data slots */
+    uint8_t *tcb;                  /* the fake thread block this library's `mrs tpidr_el0` reads: the page after the stubs, data view */
     size_t stub_used, stub_cap, nstub;
     uint8_t *isl_rx, *isl_rw;      /* a second pool of stubs inside the image: the dead tail of the relocation table, for sites too far from the stub pages */
     size_t isl_used, isl_cap;
@@ -107,7 +110,6 @@ static struct {
     int napks;
     int verbosity;
     size_t unresolved;
-    uint8_t *tcb_rx, *tcb_rw;      /* the fake thread block every `mrs tpidr_el0` reads */
     char **argv, **envp;
     bool recursive_init;
 } G = { .lock = PTHREAD_MUTEX_INITIALIZER, .verbosity = 1 };
@@ -764,6 +766,36 @@ bool tl_ld_probe(tl_lib *L, uint64_t vaddr, void (*cb)(uint64_t *regs))
     return true;
 }
 
+/*
+ * Stubs are position-independent: they hold no absolute address, so the same bytes work wherever the image is loaded -- in the JIT
+ * region, or as a signed dylib made ahead of time (elf2macho, Husk 3.2), where the code is read-only and its address unknown when it
+ * is written. An address a stub needs is computed from its own pc (adrp + add). A value only known at run time is read from a data
+ * slot through the data view (slot + delta), which the loader fills when it maps or imports the library:
+ */
+#define SLOT_SVC   0              /* in the stub pages and the island pool: the address of tl_svc_common */
+#define SLOT_VX18  8              /* in the stub pages: the virtual x18's byte offset from the thread's TSD base */
+
+/* adrp Xd, <the 4 KiB page of target>, for an instruction at pc; false when the target is out of adrp's reach (+-4 GiB) */
+static bool e_adrp_ok(const void *pc, const void *target)
+{
+    int64_t pages = ((int64_t)((uintptr_t)target & ~(uintptr_t)0xFFF) - (int64_t)((uintptr_t)pc & ~(uintptr_t)0xFFF)) >> 12;
+    return pages >= -(1 << 20) && pages < (1 << 20);
+}
+static uint32_t e_adrp(unsigned rd, const void *pc, const void *target)
+{
+    int64_t pages = ((int64_t)((uintptr_t)target & ~(uintptr_t)0xFFF) - (int64_t)((uintptr_t)pc & ~(uintptr_t)0xFFF)) >> 12;
+    uint32_t imm = (uint32_t)pages & 0x1FFFFFu;
+    return 0x90000000u | ((imm & 3u) << 29) | ((imm >> 2) << 5) | (rd & 0x1Fu);
+}
+static inline uint32_t e_add_lo12(unsigned rd, unsigned rn, const void *target)   /* add Xd, Xn, #:lo12:target */
+{
+    return 0x91000000u | ((uint32_t)((uintptr_t)target & 0xFFFu) << 10) | (rn << 5) | rd;
+}
+static inline uint32_t e_ldr_lo12(unsigned rt, unsigned rn, const void *target)   /* ldr Xt, [Xn, #:lo12:target] (8-byte aligned) */
+{
+    return 0xF9400000u | ((uint32_t)(((uintptr_t)target & 0xFFFu) >> 3) << 10) | (rn << 5) | rt;
+}
+
 static bool stub_in_range(const uint8_t *site, const uint8_t *stub)
 {
     int64_t to = ((int64_t)stub - (int64_t)site) / 4;
@@ -793,20 +825,39 @@ static bool stub_slot(tl_lib *L, const uint8_t *site_rx, uint8_t **rx, uint8_t *
 /*
  * `adr Xd, label` where the label is writable data. adr reaches only a megabyte, and the writable view of the
  * image is somewhere else entirely, so the instruction is replaced by a branch to a stub that builds the writable
- * view's address in Xd (four moves) and branches back. Linkers turn adrp+add pairs into adr when the target is
- * close, which is why small libraries have these and Unity's did not.
+ * view's address in Xd (adrp + add, from the stub's own pc) and branches back. Linkers turn adrp+add pairs into adr
+ * when the target is close, which is why small libraries have these and Unity's did not.
  */
-static bool adr_stub(tl_lib *L, const uint8_t *site_rx, uint32_t rd, uint64_t target, uint32_t *branch)
+static bool adr_stub(tl_lib *L, const uint8_t *site_rx, uint32_t rd, const uint8_t *target, uint32_t *branch)
+{
+    uint8_t *rx, *rw; const uint8_t *lit;
+    if (!stub_slot(L, site_rx, &rx, &rw, &lit)) return false;
+    if (!e_adrp_ok(rx, target)) { memset(rw, 0, 32); return false; }
+    int64_t to = ((int64_t)rx - (int64_t)site_rx) / 4;
+    int64_t back = ((int64_t)(site_rx + 4) - (int64_t)(rx + 8)) / 4;
+    uint32_t code[8] = {
+        e_adrp(rd, rx, target),                                                 /* adrp Xd, target */
+        e_add_lo12(rd, rd, target),                                             /* add Xd, Xd, #:lo12:target */
+        0x14000000u | ((uint32_t)back & 0x3FFFFFFu),                            /* b site+4 */
+        0xD503201Fu, 0xD503201Fu, 0xD503201Fu, 0xD503201Fu, 0xD503201Fu,
+    };
+    memcpy(rw, code, 32);
+    *branch = 0x14000000u | ((uint32_t)to & 0x3FFFFFFu);
+    return true;
+}
+
+/* An instruction that should put a constant in Xd (the cache type register's value): a stub that moves it there and branches back. */
+static bool const_stub(tl_lib *L, const uint8_t *site_rx, uint32_t rd, uint64_t value, uint32_t *branch)
 {
     uint8_t *rx, *rw; const uint8_t *lit;
     if (!stub_slot(L, site_rx, &rx, &rw, &lit)) return false;
     int64_t to = ((int64_t)rx - (int64_t)site_rx) / 4;
     int64_t back = ((int64_t)(site_rx + 4) - (int64_t)(rx + 16)) / 4;
     uint32_t code[8] = {
-        0xD2800000u | ((uint32_t)(target & 0xFFFF) << 5) | rd,                  /* movz Xd, #bits 0..15 */
-        0xF2A00000u | ((uint32_t)((target >> 16) & 0xFFFF) << 5) | rd,          /* movk Xd, #bits 16..31, lsl 16 */
-        0xF2C00000u | ((uint32_t)((target >> 32) & 0xFFFF) << 5) | rd,          /* movk Xd, #bits 32..47, lsl 32 */
-        0xF2E00000u | ((uint32_t)((target >> 48) & 0xFFFF) << 5) | rd,          /* movk Xd, #bits 48..63, lsl 48 */
+        0xD2800000u | ((uint32_t)(value & 0xFFFF) << 5) | rd,                   /* movz Xd, #bits 0..15 */
+        0xF2A00000u | ((uint32_t)((value >> 16) & 0xFFFF) << 5) | rd,           /* movk Xd, #bits 16..31, lsl 16 */
+        0xF2C00000u | ((uint32_t)((value >> 32) & 0xFFFF) << 5) | rd,           /* movk Xd, #bits 32..47, lsl 32 */
+        0xF2E00000u | ((uint32_t)((value >> 48) & 0xFFFF) << 5) | rd,           /* movk Xd, #bits 48..63, lsl 48 */
         0x14000000u | ((uint32_t)back & 0x3FFFFFFu),                            /* b site+4 */
         0xD503201Fu, 0xD503201Fu, 0xD503201Fu,
     };
@@ -820,17 +871,18 @@ static uint8_t *svc_stub(tl_lib *L, const uint8_t *site_rx)
 {
     uint8_t *rx, *rw; const uint8_t *lit;
     if (!stub_slot(L, site_rx, &rx, &rw, &lit)) return NULL;
-    uint32_t imm19 = (uint32_t)(((int64_t)lit - (int64_t)(rx + 8)) / 4) & 0x7FFFFu;
-    int64_t back = ((int64_t)(site_rx + 4) - (int64_t)(rx + 24)) / 4;
+    const uint8_t *slot = lit + SLOT_SVC + (L->rw - L->rx);       /* the pool's tl_svc_common slot, in the data view */
+    if (!e_adrp_ok(rx + 8, slot)) { memset(rw, 0, 32); return NULL; }
+    int64_t back = ((int64_t)(site_rx + 4) - (int64_t)(rx + 28)) / 4;
     uint32_t code[8] = {
         0xA9BF7BFDu,                    /* stp x29, x30, [sp, #-16]! */
         0xA9BF47F0u,                    /* stp x16, x17, [sp, #-16]! */
-        0x58000010u | (imm19 << 5),     /* ldr x16, <the tl_svc_common literal at the page start> */
+        e_adrp(16, rx + 8, slot),       /* adrp x16, slot */
+        e_ldr_lo12(16, 16, slot),       /* ldr x16, [x16, #:lo12:slot] */
         0xD63F0200u,                    /* blr x16 */
         0xA8C147F0u,                    /* ldp x16, x17, [sp], #16 */
         0xA8C17BFDu,                    /* ldp x29, x30, [sp], #16 */
         0x14000000u | ((uint32_t)back & 0x3FFFFFFu),   /* b site+4 */
-        0xD503201Fu,                    /* nop */
     };
     memcpy(rw, code, 32);
     return rx;
@@ -916,8 +968,9 @@ static inline uint32_t e_stur(unsigned rt, int imm)  { return 0xF8000000u | (((u
 static inline uint32_t e_ldur(unsigned rt, int imm)  { return 0xF8400000u | (((uint32_t)imm & 0x1FFu) << 12) | (31u << 5) | rt; }
 static inline uint32_t e_mrs_tsd(unsigned rt)        { return 0xD53BD060u | rt; }
 static inline uint32_t e_and_tsd(unsigned r)         { return 0x927DF000u | (r << 5) | r; }          /* and r, r, #~7 */
-static inline uint32_t e_ldr_slot(unsigned rt, unsigned rn) { return 0xF9400000u | ((uint32_t)(g_vx18_off / 8) << 10) | (rn << 5) | rt; }
-static inline uint32_t e_str_slot(unsigned rt, unsigned rn) { return 0xF9000000u | ((uint32_t)(g_vx18_off / 8) << 10) | (rn << 5) | rt; }
+static inline uint32_t e_ldr0(unsigned rt, unsigned rn)   { return 0xF9400000u | (rn << 5) | rt; }   /* ldr Xt, [Xn] */
+static inline uint32_t e_str0(unsigned rt, unsigned rn)   { return 0xF9000000u | (rn << 5) | rt; }   /* str Xt, [Xn] */
+static inline uint32_t e_add_reg(unsigned rd, unsigned rn, unsigned rm) { return 0x8B000000u | (rm << 16) | (rn << 5) | rd; }
 
 static int e_mov64(uint32_t *out, unsigned rd, uint64_t v)
 {
@@ -971,10 +1024,18 @@ static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc, ptrdiff_
     uint32_t used = a64_gpr_mask(insn);
 #define EMIT(word) do { uint32_t w_ = (word); c[n++] = w_; } while (0)
 #define EMIT_B(to) do { uint32_t w_ = e_b(rx + n * 4, (to)); c[n++] = w_; } while (0)
+    /* R = the address of this thread's virtual x18 (TSD base + the offset in the SLOT_VX18 data slot); U is clobbered */
+    const uint8_t *vslot = L->stub_rx + SLOT_VX18 + delta;
+    if (!e_adrp_ok(rx, vslot) || !e_adrp_ok(rx + X18_STUB_BYTES, vslot)) return X18_FAILED;
+#define EMIT_SLOT_ADDR(R, U) do { EMIT(e_adrp((U), rx + n * 4, vslot)); EMIT(e_ldr_lo12((U), (U), vslot)); \
+                                  EMIT(e_mrs_tsd(R)); EMIT(e_and_tsd(R)); EMIT(e_add_reg((R), (R), (U))); } while (0)
 
     if ((insn & 0x9F000000u) == 0x90000000u || (insn & 0x9F000000u) == 0x10000000u || (insn & 0xBF000000u) == 0x18000000u) {
-        /* pc-relative into x18: the value is a constant of the site, known now */
-        uint64_t value;
+        /* pc-relative into x18: the value is a constant of the site. An address (adrp, adr) is rebuilt from the stub's own pc; a
+         * literal's value (ldr literal) is read now. */
+        unsigned S = 16, T = 17;
+        EMIT(e_stur(S, -16)); EMIT(e_stur(T, -8));
+        EMIT_SLOT_ADDR(T, S);
         if ((insn & 0x9F000000u) == 0x90000000u || (insn & 0x9F000000u) == 0x10000000u) {
             bool page = (insn & 0x80000000u) != 0;
             int64_t imm = (int64_t)((((insn >> 5) & 0x7FFFFu) << 2) | ((insn >> 29) & 3u));
@@ -982,21 +1043,24 @@ static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc, ptrdiff_
             uintptr_t tp = page ? ((uintptr_t)pc & ~(uintptr_t)0xFFF) + (uintptr_t)(imm * 4096) : (uintptr_t)pc + (uintptr_t)imm;
             if (tp >= (uintptr_t)L->rx && tp < (uintptr_t)L->rx + L->npages * PAGE && data_page(L, (tp - (uintptr_t)L->rx) / PAGE))
                 tp += (uintptr_t)delta;
-            value = tp;
+            if (!e_adrp_ok(rx + n * 4, (const void *)tp)) return X18_FAILED;
+            EMIT(e_adrp(S, rx + n * 4, (const void *)tp));
+            if (!page) EMIT(e_add_lo12(S, S, (const void *)tp));
         } else {
             int64_t imm = (int64_t)((insn >> 5) & 0x7FFFFu);
             if (imm & 0x40000) imm -= 0x80000;
             const uint8_t *src = (const uint8_t *)((uintptr_t)pc + (uintptr_t)(imm * 4) + (uintptr_t)delta);
-            value = (insn & 0x40000000u) ? *(const uint64_t *)src : (uint64_t)*(const uint32_t *)src;
+            uint64_t value = (insn & 0x40000000u) ? *(const uint64_t *)src : (uint64_t)*(const uint32_t *)src;
+            n += e_mov64(c + n, S, value);
         }
-        unsigned S = 16, T = 17;
-        EMIT(e_stur(S, -16)); EMIT(e_stur(T, -8));
-        n += e_mov64(c + n, S, value);
-        EMIT(e_mrs_tsd(T)); EMIT(e_and_tsd(T)); EMIT(e_str_slot(S, T));
+        EMIT(e_str0(S, T));
         EMIT(e_ldur(T, -8)); EMIT(e_ldur(S, -16));
         EMIT_B(back);
     } else if ((insn & 0xFFFFFC1Fu) == 0xD61F0000u) {                       /* br x18 */
-        EMIT(e_mrs_tsd(17)); EMIT(e_and_tsd(17)); EMIT(e_ldr_slot(17, 17));
+        EMIT(e_stur(16, -16));
+        EMIT_SLOT_ADDR(17, 16);
+        EMIT(e_ldr0(17, 17));
+        EMIT(e_ldur(16, -16));
         EMIT(0xD61F0000u | (17u << 5));
     } else if ((insn & 0x7E000000u) == 0x34000000u || (insn & 0x7E000000u) == 0x36000000u) {   /* cbz, cbnz, tbz, tbnz */
         bool is_tb = (insn & 0x7E000000u) == 0x36000000u;
@@ -1004,15 +1068,16 @@ static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc, ptrdiff_
         int64_t sign = is_tb ? 0x2000 : 0x40000;
         if (imm & sign) imm -= sign * 2;
         const uint8_t *target = pc + imm * 4;
-        unsigned S = 16;
-        EMIT(e_stur(S, -16));
-        EMIT(e_mrs_tsd(S)); EMIT(e_and_tsd(S)); EMIT(e_ldr_slot(S, S));
-        /* the test at index 4 branches to index 7 when taken: three instructions on */
+        unsigned S = 16, T = 17;
+        EMIT(e_stur(S, -16)); EMIT(e_stur(T, -8));
+        EMIT_SLOT_ADDR(T, S);
+        EMIT(e_ldr0(S, T));
+        /* the test branches four instructions on when taken, past the not-taken path's restore and branch back */
         uint32_t field_mask = is_tb ? (0x3FFFu << 5) : (0x7FFFFu << 5);
-        EMIT((insn & ~(field_mask | 0x1Fu)) | (3u << 5) | S);
-        EMIT(e_ldur(S, -16));
+        EMIT((insn & ~(field_mask | 0x1Fu)) | (4u << 5) | S);
+        EMIT(e_ldur(T, -8)); EMIT(e_ldur(S, -16));
         EMIT_B(back);
-        EMIT(e_ldur(S, -16));
+        EMIT(e_ldur(T, -8)); EMIT(e_ldur(S, -16));
         if (!in_range_b(rx + n * 4, target)) return X18_FAILED;
         EMIT_B(target);
     } else {
@@ -1042,9 +1107,10 @@ static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc, ptrdiff_
             if (!S || !T) return X18_FAILED;
             if (mode == 3) EMIT(adjust);
             EMIT(e_stur(S, -16)); EMIT(e_stur(T, -8));
-            EMIT(e_mrs_tsd(S)); EMIT(e_and_tsd(S)); EMIT(e_ldr_slot(S, S));
+            EMIT_SLOT_ADDR(T, S);
+            EMIT(e_ldr0(S, T));
             EMIT(a64_subst_gpr(plain, 18, S));
-            EMIT(e_mrs_tsd(T)); EMIT(e_and_tsd(T)); EMIT(e_str_slot(S, T));
+            EMIT(e_str0(S, T));
             EMIT(e_ldur(T, -8)); EMIT(e_ldur(S, -16));
             if (mode == 1) EMIT(adjust);
             EMIT_B(back);
@@ -1053,16 +1119,18 @@ static int x18_rewrite(tl_lib *L, uint32_t *site_rw, const uint8_t *pc, ptrdiff_
         unsigned S = pick_scratch(used, 0), T = pick_scratch(used, S);
         if (!S || !T) return X18_FAILED;
         EMIT(e_stur(S, -16)); EMIT(e_stur(T, -8));
-        EMIT(e_mrs_tsd(S)); EMIT(e_and_tsd(S)); EMIT(e_ldr_slot(S, S));
+        EMIT_SLOT_ADDR(T, S);
+        EMIT(e_ldr0(S, T));
         EMIT(a64_subst_gpr(insn, 18, S));
-        EMIT(e_mrs_tsd(T)); EMIT(e_and_tsd(T)); EMIT(e_str_slot(S, T));
+        EMIT(e_str0(S, T));
         EMIT(e_ldur(T, -8)); EMIT(e_ldur(S, -16));
         EMIT_B(back);
     }
 emitted:
 #undef EMIT
 #undef EMIT_B
-    if (!in_range_b(pc, rx)) return X18_FAILED;
+#undef EMIT_SLOT_ADDR
+    if (n > X18_STUB_BYTES / 4 || !in_range_b(pc, rx)) return X18_FAILED;
     memcpy(rw, c, (size_t)n * 4);
     for (int i = n; i < X18_STUB_BYTES / 4; i++) ((uint32_t *)rw)[i] = 0xD503201Fu;
     L->stub_used += X18_STUB_BYTES;
@@ -1164,10 +1232,10 @@ static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_ad
                 /* The cache type register: the smallest cache lines the program may assume. Code that flushes the
                  * instruction cache (V8) reads it to step by line; 64 bytes is right for Apple's and safe for any. */
                 uint32_t branch;
-                if (adr_stub(L, pc, insn & 0x1Fu, 0x8444c004ull, &branch)) { w[i] = branch; L->n_ctr++; }
+                if (const_stub(L, pc, insn & 0x1Fu, 0x8444c004ull, &branch)) { w[i] = branch; L->n_ctr++; }
                 else L->n_adr_failed++;
             } else if ((insn & 0xFFFFFFE0u) == 0xD53BD040u) {            /* mrs Xt, tpidr_el0 */
-                w[i] = encode_adrp(insn & 0x1Fu, pc, G.tcb_rw);
+                w[i] = encode_adrp(insn & 0x1Fu, pc, L->tcb);
                 (*n_tpidr)++;
             } else if ((insn & 0x9F000000u) == 0x90000000u) {     /* adrp */
                 int64_t imm = (int64_t)((((insn >> 5) & 0x7FFFFu) << 2) | ((insn >> 29) & 3u));
@@ -1201,7 +1269,7 @@ static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_ad
                     && data_page(L, (tp - (uintptr_t)L->rx) / PAGE)
                     && !in_code(L, (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr)) {
                     uint32_t branch;
-                    if (adr_stub(L, pc, insn & 0x1Fu, (uint64_t)(tp + (uintptr_t)delta), &branch)) { w[i] = branch; (*n_adr)++; }
+                    if (adr_stub(L, pc, insn & 0x1Fu, (const uint8_t *)(tp + (uintptr_t)delta), &branch)) { w[i] = branch; (*n_adr)++; }
                     else L->n_adr_failed++;
                 }
             }
@@ -1248,7 +1316,7 @@ static void *tls_block(unsigned module)
         if (posix_memalign(&b, (size_t)al, (size_t)(g_tlsmod[module].memsz + 16)) != 0) return NULL;
         memset(b, 0, (size_t)g_tlsmod[module].memsz);
         const tl_lib *L = g_tlsmod[module].lib;
-        if (g_tlsmod[module].filesz) memcpy(b, L->rx + (g_tlsmod[module].init_vaddr - L->base_vaddr), (size_t)g_tlsmod[module].filesz);
+        if (g_tlsmod[module].filesz) memcpy(b, L->rw + (g_tlsmod[module].init_vaddr - L->base_vaddr), (size_t)g_tlsmod[module].filesz);
         t->blk[module] = b;
     }
     return t->blk[module];
@@ -1263,8 +1331,11 @@ void *tl_ld_tls_get_addr(uint64_t module, uint64_t offset)
 /* arg is the descriptor's second word: the module in the high half, the variable's offset in its template in the low. */
 __attribute__((used)) uint64_t tl_tls_offset(uint64_t arg)
 {
-    uint8_t *b = tls_block((unsigned)(arg >> 32));
-    uintptr_t tp = (uintptr_t)G.tcb_rw & ~(uintptr_t)0xFFF;                 /* what `mrs xN, tpidr_el0` was turned into */
+    unsigned module = (unsigned)(arg >> 32);
+    uint8_t *b = tls_block(module);
+    /* what `mrs xN, tpidr_el0` was turned into in the library that owns the variable (descriptors only name a library's own) */
+    const tl_lib *owner = module && module <= (unsigned)g_ntls ? g_tlsmod[module].lib : NULL;
+    uintptr_t tp = owner ? (uintptr_t)owner->tcb & ~(uintptr_t)0xFFF : 0;
     return (uint64_t)((uintptr_t)(b ? b : (uint8_t *)tp) + (uint32_t)arg - tp);
 }
 
@@ -1527,16 +1598,6 @@ static void parse_dynamic(tl_lib *L, uint64_t dyn_vaddr, uint64_t dyn_size)
     }
 }
 
-static bool ensure_tcb(void)
-{
-    if (G.tcb_rw) return true;
-    if (!tl_xmem_alloc(PAGE, &G.tcb_rx, &G.tcb_rw)) return false;
-    uint64_t *t = (uint64_t *)G.tcb_rw;
-    t[0] = (uint64_t)(uintptr_t)G.tcb_rw;      /* self */
-    t[1] = 1000; t[2] = 1000;
-    t[5] = 0xdeadbeefcafebabeull;             /* [tpidr_el0 + 0x28]: the stack cookie */
-    return true;
-}
 
 
 /* ------------------------------------------------------------------ unwind ranges */
@@ -1730,6 +1791,41 @@ static uint8_t *build_data_map(const tl_lib *L, const uint32_t *w, size_t n, uin
     return data;
 }
 
+/*
+ * Ahead-of-time builds (Husk 3.2, tl_ld_aot_build): map_library takes its memory from here instead of the JIT region. One anonymous
+ * region of `bytes` at A and a second mapping of the same pages at A + bytes, so the image is patched exactly as in the JIT region,
+ * through a writable view a fixed distance away -- the distance a dylib has from its __TEXT image to its __DATA copy.
+ */
+static struct { bool on; vm_address_t base; vm_size_t size; } g_aot;
+
+static bool aot_alloc(size_t bytes, uint8_t **rx, uint8_t **rw)
+{
+    vm_address_t a = 0;
+    if (vm_allocate(mach_task_self(), &a, 2 * bytes, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) return false;
+    vm_address_t alias = a + bytes; vm_prot_t cur, max;
+    if (vm_remap(mach_task_self(), &alias, bytes, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), a, FALSE, &cur, &max,
+                 VM_INHERIT_NONE) != KERN_SUCCESS || alias != a + bytes) {
+        vm_deallocate(mach_task_self(), a, 2 * bytes);
+        return false;
+    }
+    g_aot.base = a; g_aot.size = 2 * bytes;
+    *rx = (uint8_t *)(uintptr_t)a; *rw = (uint8_t *)(uintptr_t)alias;
+    return true;
+}
+
+/* What the library's position-independent code reads at run time: the stub pages' data slots and the thread block. Written through the
+ * data view, so this is the same for an image in the JIT region and for one imported as a signed dylib. */
+static void fill_data_slots(tl_lib *L)
+{
+    uint64_t svc = (uint64_t)(uintptr_t)tl_svc_common, vx18 = (uint64_t)(g_vx18_off < 0 ? 0 : g_vx18_off);
+    memcpy(L->stub_rw + SLOT_SVC, &svc, 8);
+    memcpy(L->stub_rw + SLOT_VX18, &vx18, 8);
+    uint64_t *t = (uint64_t *)L->tcb;
+    t[0] = (uint64_t)(uintptr_t)L->tcb;       /* self */
+    t[1] = 1000; t[2] = 1000;
+    t[5] = 0xdeadbeefcafebabeull;             /* [tpidr_el0 + 0x28]: the stack cookie */
+}
+
 static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
 {
     if (G.nlibs >= MAX_LIBS) { tl_log_line("ld: too many libraries"); return NULL; }
@@ -1851,7 +1947,8 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
     if (!vx18_init()) tl_log_line("ld: no thread-specific slot for the virtual x18; instructions using x18 will not be rewritten");
 
     uint8_t *rx, *rw;
-    if (!tl_xmem_alloc((npages + nstub) * PAGE, &rx, &rw)) {
+    /* the image, its stub pages, and a page for its thread block */
+    if (g_aot.on ? !aot_alloc((npages + nstub + 1) * PAGE, &rx, &rw) : !tl_xmem_alloc((npages + nstub + 1) * PAGE, &rx, &rw)) {
         tl_log_line("ld: %s needs %zu MiB of executable memory and the region has %zu MiB left", name,
                     npages * PAGE >> 20, (tl_xmem_size() - tl_xmem_used()) >> 20);
         free(flags); free(phs);
@@ -1859,7 +1956,7 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
     }
     /* The region's pages are not guaranteed zero (StikDebug writes a byte into each),
      * and .bss has to be. */
-    memset(rw, 0, (npages + nstub) * PAGE);
+    memset(rw, 0, (npages + nstub + 1) * PAGE);
     for (unsigned i = 0; i < eh->e_phnum; i++) {
         const elf_phdr *p = &phs[i];
         if (p->p_type != PT_LOAD_ || !p->p_filesz) continue;
@@ -1879,7 +1976,7 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
     if (go) tl_log_line("ld: %s is a Go library: its read-only data is reached through the writable view too", name);
     L->phdr = phs; L->phnum = eh->e_phnum;
     load_unwind_ranges(L, file, flen, phs, eh->e_phnum);
-    if (has_tls) {
+    if (has_tls && !g_aot.on) {
         if (g_ntls >= MAX_TLS_MODULES) { tl_log_line("ld: %s: too many libraries with thread-local storage", name); return NULL; }
         L->tls_id = ++g_ntls;
         g_tlsmod[L->tls_id].lib = L; g_tlsmod[L->tls_id].init_vaddr = tls_seg.p_vaddr; g_tlsmod[L->tls_id].filesz = tls_seg.p_filesz;
@@ -1888,7 +1985,8 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
     for (int r = 0; r < ncode; r++) { L->code[r].start = code[r].vaddr; L->code[r].end = code[r].vaddr + code[r].size; }
     L->ncode = ncode;
     L->stub_rx = rx + npages * PAGE; L->stub_rw = rw + npages * PAGE; L->stub_used = 16; L->stub_cap = nstub * PAGE; L->nstub = nstub;
-    { uint64_t h = (uint64_t)(uintptr_t)tl_svc_common; memcpy(L->stub_rw, &h, 8); }
+    L->tcb = rw + (npages + nstub) * PAGE;
+    fill_data_slots(L);
     parse_dynamic(L, dyn_v, dyn_n);
     if (L->strtab) {
         const elf_dyn *d = at(L, dyn_v);
@@ -1900,7 +1998,7 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
     L->nsyms = count_dynsyms(L);
     L->ncache = dynsym_bound(L, L->nsyms);
     if (L->ncache) L->symcache = calloc(L->ncache, sizeof(uint64_t));
-    G.libs[G.nlibs++] = L;
+    if (!g_aot.on) G.libs[G.nlibs++] = L;
     return L;
 }
 
@@ -1945,6 +2043,45 @@ static void mono_aot_code_only(tl_lib *L)
                 (double)(r[0].end - r[0].start) / 1048576.0, (double)(L->npages * PAGE) / 1048576.0);
 }
 
+/* BoringSSL's FIPS self-check hashes its own .text, which the loader has rewritten (svc, x18, tpidr sites), and aborts on the
+ * mismatch. Skip it: the code itself is unchanged. */
+static void skip_boringssl_selfcheck(tl_lib *L)
+{
+    const elf_sym *fips = lib_find(L, "BORINGSSL_integrity_test");
+    if (fips && fips->st_shndx) {
+        uint8_t *x = (uint8_t *)sym_value(L, fips);
+        if (x >= L->rx && x < L->rx + L->npages * PAGE) {
+            uint32_t ret = 0xd65f03c0u;
+            memcpy(L->rw + (x - L->rx), &ret, 4);
+            tl_log_line("ld: %s: skipped BORINGSSL_integrity_test", L->name);
+        }
+    }
+}
+
+/*
+ * Every rewrite of the library's code, done once its relocation table is no longer needed: the island pool in the dead tail of the
+ * relocation table, then patch_image over the code ranges. The same function patches an image in the JIT region at load time and an
+ * image being made into a dylib ahead of time (tl_ld_aot_build), which is why it only writes through the writable view and every stub
+ * it makes is position-independent.
+ */
+static void patch_library(tl_lib *L, size_t *t, size_t *a, size_t *ad, size_t *sv)
+{
+    /* The relocation table is dead now that the image is relocated. Its tail becomes a second pool of stubs, for the
+     * sites that are out of branch range of the stub pages after a very large image. */
+    if (L->relasz >= (1u << 20) && L->rela >= L->base_vaddr) {
+        uint64_t end = (L->rela + L->relasz) & ~(uint64_t)(PAGE - 1), cap = 256u << 10;
+        if (end - L->rela > cap + PAGE) {
+            size_t off = (size_t)(end - cap - L->base_vaddr);
+            L->isl_rx = L->rx + off; L->isl_rw = L->rw + off; L->isl_cap = cap; L->isl_used = 16;
+            memset(L->isl_rw, 0, cap);
+            uint64_t h = (uint64_t)(uintptr_t)tl_svc_common; memcpy(L->isl_rw + SLOT_SVC, &h, 8);
+        }
+    }
+    mono_aot_code_only(L);
+    patch_image(L, t, a, ad, sv);
+    skip_boringssl_selfcheck(L);
+}
+
 static bool relocate(tl_lib *L)
 {
     size_t count = 0;
@@ -1956,20 +2093,8 @@ static bool relocate(tl_lib *L)
     free(L->symcache);
     L->symcache = NULL;
     if (!ok) { tl_log_line("ld: %s: relocation failed", L->name); return false; }
-    /* The relocation table is dead now that the image is relocated. Its tail becomes a second pool of stubs, for the
-     * sites that are out of branch range of the stub pages after a very large image. */
-    if (L->relasz >= (1u << 20) && L->rela >= L->base_vaddr) {
-        uint64_t end = (L->rela + L->relasz) & ~(uint64_t)(PAGE - 1), cap = 256u << 10;
-        if (end - L->rela > cap + PAGE) {
-            size_t off = (size_t)(end - cap - L->base_vaddr);
-            L->isl_rx = L->rx + off; L->isl_rw = L->rw + off; L->isl_cap = cap; L->isl_used = 16;
-            memset(L->isl_rw, 0, cap);
-            uint64_t h = (uint64_t)(uintptr_t)tl_svc_common; memcpy(L->isl_rw, &h, 8);
-        }
-    }
     size_t t = 0, a = 0, ad = 0, sv = 0;
-    mono_aot_code_only(L);
-    patch_image(L, &t, &a, &ad, &sv);
+    patch_library(L, &t, &a, &ad, &sv);
     tl_xmem_flush(L->rx, (L->npages + L->nstub) * PAGE);
     L->state = 2;
     if (G.verbosity >= 1) {
@@ -2058,7 +2183,6 @@ static tl_lib *load_locked(const char *name, int depth, bool system)
         ptrdiff_t d = tl_xmem_delta();
         if (d > ((ptrdiff_t)3 << 30) || d < -((ptrdiff_t)3 << 30)) { tl_log_line("ld: the writable and executable views are %td MiB apart: too far for adrp", d >> 20); free(file); return NULL; }
     }
-    if (!ensure_tcb()) { free(file); return NULL; }
     L = map_library(name, file, flen);
     free(file);
     if (!L) return NULL;
@@ -2098,18 +2222,6 @@ static bool init_locked(tl_lib *L)
     char **argv = G.argv ? G.argv : fallback_argv, **envp = G.envp ? G.envp : fallback_envp;
     int argc = 1;
     typedef void (*init_fn)(int, char **, char **);
-    /* BoringSSL's FIPS self-check hashes its own .text, which the loader has rewritten (svc,
-     * x18, tpidr sites), and aborts on the mismatch. Skip it: the code itself is unchanged. */
-    const elf_sym *fips = lib_find(L, "BORINGSSL_integrity_test");
-    if (fips && fips->st_shndx) {
-        uint8_t *x = (uint8_t *)sym_value(L, fips);
-        if (x >= L->rx) {
-            uint32_t ret = 0xd65f03c0u;
-            memcpy(L->rw + (x - L->rx), &ret, 4);
-            sys_icache_invalidate(x, 4);
-            tl_log_line("ld: %s: skipped BORINGSSL_integrity_test", L->name);
-        }
-    }
     if (L->init) ((init_fn)(L->rx + (L->init - L->base_vaddr)))(argc, argv, envp);
     if (L->init_array) {
         const uint64_t *fns = at(L, L->init_array);
@@ -2139,4 +2251,62 @@ bool tl_ld_init(tl_lib *lib)
     bool ok = init_locked(lib);
     pthread_mutex_unlock(&g_big);
     return ok;
+}
+
+/* ------------------------------------------------------------ ahead of time */
+
+bool tl_ld_aot_build(const char *name, const uint8_t *file, size_t flen, tl_ld_aot_image *out)
+{
+    memset(out, 0, sizeof(*out));
+    uint8_t *copy = malloc(flen ? flen : 1);
+    if (!copy) { snprintf(out->err, sizeof(out->err), "out of memory"); return false; }
+    memcpy(copy, file, flen);
+    pthread_mutex_lock(&g_big);
+    g_aot.on = true; g_aot.base = 0; g_aot.size = 0;
+    tl_lib *L = map_library(name, copy, flen);
+    g_aot.on = false;
+    free(copy);
+    if (!L) {
+        pthread_mutex_unlock(&g_big);
+        snprintf(out->err, sizeof(out->err), "%s could not be mapped (see the log)", name);
+        if (g_aot.base) vm_deallocate(mach_task_self(), g_aot.base, g_aot.size);
+        return false;
+    }
+    size_t size = (L->npages + L->nstub + 1) * PAGE;
+    out->size = size; out->base_vaddr = L->base_vaddr; out->npages = L->npages; out->nstub = L->nstub;
+    out->data = calloc(1, size);
+    out->text = malloc(size);
+    if (out->data && out->text) {
+        memcpy(out->data, L->rw, L->npages * PAGE);       /* the image before any rewrite: relocated at run time, in place */
+        size_t t = 0, a = 0, ad = 0, sv = 0;
+        patch_library(L, &t, &a, &ad, &sv);
+        memcpy(out->text, L->rx, size);
+        /* The data slots and the thread block were filled through the data view, which in this build is the same memory: in the
+         * dylib they belong to __DATA (filled at run time), and in __TEXT they would only be addresses of this process. */
+        memset(out->text + L->npages * PAGE + SLOT_SVC, 0, 16);
+        memset(out->text + (L->npages + L->nstub) * PAGE, 0, PAGE);
+        if (L->isl_rx) memset(out->text + (L->isl_rx - L->rx) + SLOT_SVC, 0, 8);
+        for (size_t p = 0; p < L->npages; p++) if ((L->pflags[p] & TL_PAGE_W) && (L->pflags[p] & TL_PAGE_X)) out->n_mixed++;
+        out->n_x18 = L->n_x18; out->n_x18_failed = L->n_x18_failed; out->n_svc = sv; out->n_svc_far = L->n_svc_far;
+        out->n_adrp = a; out->n_adr = ad; out->n_tpidr = t; out->n_adr_failed = L->n_adr_failed;
+    } else snprintf(out->err, sizeof(out->err), "out of memory");
+    bool ok = out->data && out->text;
+    vm_deallocate(mach_task_self(), g_aot.base, g_aot.size);
+    free(L->symcache); free(L->pflags); free(L->phdr); free(L->fde_start); free(L->fde_end); free(L);
+    pthread_mutex_unlock(&g_big);
+    if (!ok) tl_ld_aot_free(out);
+    return ok;
+}
+
+uint64_t tl_aot_hash(const uint8_t *p, size_t n)
+{
+    uint64_t h = 1469598103934665603ull;   /* FNV-1a, 64-bit */
+    for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ull; }
+    return h;
+}
+
+void tl_ld_aot_free(tl_ld_aot_image *img)
+{
+    free(img->text); free(img->data);
+    img->text = img->data = NULL;
 }
