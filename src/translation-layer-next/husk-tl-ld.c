@@ -1745,7 +1745,8 @@ static void parse_dynamic(tl_lib *L, uint64_t dyn_vaddr, uint64_t dyn_size)
  */
 static uint8_t *copy_table(const tl_lib *L, const uint8_t *file, size_t flen, uint64_t vaddr, uint64_t bytes)
 {
-    if (!vaddr || !bytes || bytes > (24u << 20)) return NULL;
+    /* A table can be large: libminecraftpe.so's .rela.dyn is 24 MiB. The cap is only there so a corrupt size is not allocated. */
+    if (!vaddr || !bytes || bytes > (256u << 20)) return NULL;
     for (unsigned i = 0; i < L->phnum; i++) {
         const elf_phdr *p = &L->phdr[i];
         if (p->p_type != PT_LOAD_ || vaddr < p->p_vaddr || vaddr - p->p_vaddr >= p->p_filesz) continue;
@@ -2311,6 +2312,9 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
         L->jmprel_src = copy_table(L, file, flen, L->jmprel, L->pltrelsz);
         L->arela_src = copy_table(L, file, flen, L->arela, L->arelasz);
         L->relr_src = copy_table(L, file, flen, L->relr, L->relrsz);
+        if (L->rela && !L->rela_src)   /* it was patched when the dylib was made, so its image no longer holds it */
+            tl_log_line("ld: %s: its relocation table (%llu bytes) is not in the file; the image's copy is read instead", name,
+                        (unsigned long long)L->relasz);
     }
     L->nsyms = count_dynsyms(L);
     L->ncache = dynsym_bound(L, L->nsyms);
