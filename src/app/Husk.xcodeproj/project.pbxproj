@@ -113,6 +113,7 @@
 		7A7A40B3B76C8BA2D7262907 /* husk-tl-egl-es31.inc in Resources */ = {isa = PBXBuildFile; fileRef = CE99D9E12CB5823C669D9CBC /* husk-tl-egl-es31.inc */; };
 		7CA02F2FB22207E86499451E /* DownloadsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC2F367C3774A342D33D245F /* DownloadsWidget.swift */; };
 		7EF41C59B3AF51A4E96F20E0 /* fishhook.c in Sources */ = {isa = PBXBuildFile; fileRef = CC860BD7A5AF9DC83B015219 /* fishhook.c */; };
+		7EFCE4A5CC3A0F9298535EF0 /* JITLess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1791A63C016A301CFCCFB41 /* JITLess.swift */; };
 		7F4F03D8314FE02DAA0314FE /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 71CC0BAF2D79C1922A12E02A /* Localizable.strings */; };
 		7FA5D73DC2780CACC7399534 /* BundleUnpacker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E37298010F80517A3057579E /* BundleUnpacker.swift */; };
 		80C126C7BDB5EE56A7139C20 /* husk-tl-audio.c in Sources */ = {isa = PBXBuildFile; fileRef = 463C342B38F6BF37752F4E72 /* husk-tl-audio.c */; };
@@ -153,6 +154,7 @@
 		B991DDDD04903871A3A18FDF /* husk-tl-dvm-media.c in Sources */ = {isa = PBXBuildFile; fileRef = AB426A5230A1E0CF10EE402F /* husk-tl-dvm-media.c */; };
 		B9D7168A505DD009DE222599 /* husk-tl-gamepad.c in Sources */ = {isa = PBXBuildFile; fileRef = 46287061DCF461334B1A8D2E /* husk-tl-gamepad.c */; };
 		BA42565FACC0AAC10D8FEAF6 /* husk-tl-bionic-io.c in Sources */ = {isa = PBXBuildFile; fileRef = 7CC582FAC1F17C1C659C9D47 /* husk-tl-bionic-io.c */; };
+		BB540A1B6C0FE6B82BA48F25 /* husk-tl-aot.c in Sources */ = {isa = PBXBuildFile; fileRef = 1756D62F1ACF604FEAB7FEFF /* husk-tl-aot.c */; };
 		BBA9636793435EF7679E62F1 /* HuskAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14E50E2B9CCFF7B1FEF73608 /* HuskAudio.swift */; };
 		BC0702C5451118E673E70F6F /* MoltenVK.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 9713186CDCF6F1188BB4ABE1 /* MoltenVK.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		BC3BB676A454632D3686E110 /* husk-tl-shim.c in Sources */ = {isa = PBXBuildFile; fileRef = 08B65F9A6BAA4E2376A0CBD8 /* husk-tl-shim.c */; };
@@ -197,7 +199,6 @@
 		F2653F32A929D8E8BCEE057E /* husk-tl-dvm-audio.c in Sources */ = {isa = PBXBuildFile; fileRef = F58D55D1773275160F4F4717 /* husk-tl-dvm-audio.c */; };
 		F3989017EF86D4BD0D4D6DDA /* Compat15.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71DD2E2A2A0B0AB86EE783DD /* Compat15.swift */; };
 		F4833815482790E167401965 /* husk-tl-ld.c in Sources */ = {isa = PBXBuildFile; fileRef = 4D54C1E4F20A020AC62C9419 /* husk-tl-ld.c */; };
-		FBDB2142ABE67A54DBF1EB31 /* husk-tl-aot.c in Sources */ = {isa = PBXBuildFile; fileRef = CD2A7D3C88E99F69E53E4E76 /* husk-tl-aot.c */; };
 		F6880CA30640F688356229CF /* HuskMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D91C1E7D6301EBCE06FEE0FE /* HuskMetalView.swift */; };
 		F6B3DA43CA16FAF920EF236D /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05B2EFC533719ED2E455C24 /* AppTheme.swift */; };
 		FA5016C04E0EFC5FD0CF32F9 /* JITCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F54A47159D39CB8039E9E44E /* JITCard.swift */; };
@@ -261,7 +262,6 @@
 /* Begin PBXFileReference section */
 		0168E1B352FFD7A4BC207CA5 /* HuskBridgeFS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskBridgeFS.swift; sourceTree = "<group>"; };
 		02BDBFFD3329C33172416AEB /* husk-tl-ld.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-ld.h"; sourceTree = "<group>"; };
-		5F967FBDCDF94F9CB26FBA0C /* husk-tl-aot.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-aot.h"; sourceTree = "<group>"; };
 		036699CBF5693E75237EF112 /* PlayDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayDevice.swift; sourceTree = "<group>"; };
 		0384223FE1CD6D8C7C3A22A0 /* PlayStoreManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayStoreManager.swift; sourceTree = "<group>"; };
 		0544BF1DEA0D119A8C350588 /* husk-console-abi.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-console-abi.h"; sourceTree = "<group>"; };
@@ -276,6 +276,7 @@
 		14E50E2B9CCFF7B1FEF73608 /* HuskAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskAudio.swift; sourceTree = "<group>"; };
 		15908FFFE74FB2AA12F01161 /* husk-tl-dvm-gles10.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-gles10.c"; sourceTree = "<group>"; };
 		15D08F1730303C74C1B7DE23 /* AppSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSource.swift; sourceTree = "<group>"; };
+		1756D62F1ACF604FEAB7FEFF /* husk-tl-aot.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-aot.c"; sourceTree = "<group>"; };
 		182A386166343D705B52A7BF /* husk-tl-godot.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-godot.c"; sourceTree = "<group>"; };
 		198FA3419B26F852A2B05ED9 /* HuskJITMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskJITMessages.swift; sourceTree = "<group>"; };
 		1A03EC803ECECBFCA11026AF /* husk-tl-jni-tls.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-jni-tls.c"; sourceTree = "<group>"; };
@@ -345,7 +346,6 @@
 		4BD91E5537023860BD27A855 /* WebApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebApp.swift; sourceTree = "<group>"; };
 		4D3B9FB2A68373C457706DA9 /* Husk.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Husk.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4D54C1E4F20A020AC62C9419 /* husk-tl-ld.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-ld.c"; sourceTree = "<group>"; };
-		CD2A7D3C88E99F69E53E4E76 /* husk-tl-aot.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-aot.c"; sourceTree = "<group>"; };
 		505B834A46F5AA7C2BBE8526 /* husk-tl-res.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-res.h"; sourceTree = "<group>"; };
 		5236C5746D2CDE06C5D438BB /* HuskAppIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskAppIcon.swift; sourceTree = "<group>"; };
 		53FCFD712C021AB82D0FAF94 /* PlayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayText.swift; sourceTree = "<group>"; };
@@ -362,6 +362,7 @@
 		60B6DEB5B27C73D8E79DC5BA /* husk-tl-dvm-gles10ext.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-gles10ext.c"; sourceTree = "<group>"; };
 		6146DAE69D6D6462FB1FB771 /* HuskFilePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HuskFilePicker.swift; sourceTree = "<group>"; };
 		619394B1069242D8750E7F33 /* Husk.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Husk.entitlements; sourceTree = "<group>"; };
+		6313EC7B06565BAE5B00524A /* husk-tl-aot.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-aot.h"; sourceTree = "<group>"; };
 		642A69428A8151E1B1F75CBB /* husk-tl-dvm.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm.c"; sourceTree = "<group>"; };
 		6492416C2454F2656C7DB40A /* husk-tl-codewrite.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-codewrite.c"; sourceTree = "<group>"; };
 		65972F9D6806424034E38589 /* husk-tl-dvm-annotations.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-annotations.c"; sourceTree = "<group>"; };
@@ -435,6 +436,7 @@
 		AE14E4B61CC873501D7EAE6E /* SettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTab.swift; sourceTree = "<group>"; };
 		AF921E3E1F855C07C3E5D2F0 /* husk-jit-arena.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-jit-arena.c"; sourceTree = "<group>"; };
 		B08C946B21AA94C98AF6D394 /* husk-tl-dvm-web.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "husk-tl-dvm-web.m"; sourceTree = "<group>"; };
+		B1791A63C016A301CFCCFB41 /* JITLess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JITLess.swift; sourceTree = "<group>"; };
 		B318C3E235A47EA295C46433 /* husk-tl-nativeactivity.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-nativeactivity.h"; sourceTree = "<group>"; };
 		B74F9AA42414905593B347BA /* husk-jit.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "husk-jit.js"; sourceTree = "<group>"; };
 		B76CE6F39722749AA0027959 /* husk-tl-jni-cocos.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-jni-cocos.c"; sourceTree = "<group>"; };
@@ -586,6 +588,7 @@
 				5664FE015975D16E7500F3C7 /* JITBootstrap.swift */,
 				43C233A62FB57030C0818489 /* JITBuiltIn.swift */,
 				F54A47159D39CB8039E9E44E /* JITCard.swift */,
+				B1791A63C016A301CFCCFB41 /* JITLess.swift */,
 				EF6C1917FEC08090833D9CF0 /* JITPairing.swift */,
 				83275C7FEF2DEB950028D914 /* JITSetup.swift */,
 				5894E74BA308222C01AEE311 /* JITSetupView.swift */,
@@ -682,6 +685,8 @@
 				84FC0D35CCCFDAFEDB648B69 /* husk-jit-arena.h */,
 				3ADCEA1477DA816D867C1EBB /* husk-tl-a64.c */,
 				272578DB0CBA40E69B87093D /* husk-tl-a64.h */,
+				1756D62F1ACF604FEAB7FEFF /* husk-tl-aot.c */,
+				6313EC7B06565BAE5B00524A /* husk-tl-aot.h */,
 				463C342B38F6BF37752F4E72 /* husk-tl-audio.c */,
 				473B239012BE00391A4164ED /* husk-tl-audio.h */,
 				44BAD09F39FA4184F97AB0D0 /* husk-tl-bionic-cxx.c */,
@@ -769,8 +774,6 @@
 				A22242B8E3E7067D6EB2AB95 /* husk-tl-jni.c */,
 				25E6473CC71D3627AB9709D1 /* husk-tl-jni.h */,
 				4D54C1E4F20A020AC62C9419 /* husk-tl-ld.c */,
-				CD2A7D3C88E99F69E53E4E76 /* husk-tl-aot.c */,
-				5F967FBDCDF94F9CB26FBA0C /* husk-tl-aot.h */,
 				02BDBFFD3329C33172416AEB /* husk-tl-ld.h */,
 				3B72237F810FCE0EE433FA3D /* husk-tl-nativeactivity.c */,
 				B318C3E235A47EA295C46433 /* husk-tl-nativeactivity.h */,
@@ -1148,6 +1151,7 @@
 				507309F42DC8965C816DC580 /* JITBootstrap.swift in Sources */,
 				C1A4C57DAA6BFD79AAE5FD88 /* JITBuiltIn.swift in Sources */,
 				FA5016C04E0EFC5FD0CF32F9 /* JITCard.swift in Sources */,
+				7EFCE4A5CC3A0F9298535EF0 /* JITLess.swift in Sources */,
 				E7095C2C706335203227319A /* JITPairing.swift in Sources */,
 				70AF7E999105691EB51B54FD /* JITSetup.swift in Sources */,
 				D61EF536158A8495F2B0CE79 /* JITSetupView.swift in Sources */,
@@ -1184,6 +1188,7 @@
 				047BE6A58186824C4AD848AB /* husk-console-host.c in Sources */,
 				438AE953FB48EF45BB0820C2 /* husk-jit-arena.c in Sources */,
 				AC5C07974C7A8658358A55C9 /* husk-tl-a64.c in Sources */,
+				BB540A1B6C0FE6B82BA48F25 /* husk-tl-aot.c in Sources */,
 				80C126C7BDB5EE56A7139C20 /* husk-tl-audio.c in Sources */,
 				2382523F24A95C0E58189C78 /* husk-tl-bionic-cxx.c in Sources */,
 				BA42565FACC0AAC10D8FEAF6 /* husk-tl-bionic-io.c in Sources */,
@@ -1252,7 +1257,6 @@
 				202973AEE5786B84A31A57A5 /* husk-tl-jni.c in Sources */,
 				0FA2BBF68B30B5630789922B /* husk-tl-json.c in Sources */,
 				F4833815482790E167401965 /* husk-tl-ld.c in Sources */,
-				FBDB2142ABE67A54DBF1EB31 /* husk-tl-aot.c in Sources */,
 				2472A0B862A3BC5106DBAEBC /* husk-tl-load.c in Sources */,
 				305642B7B63D6DC85E36D091 /* husk-tl-nativeactivity.c in Sources */,
 				58F5A9CE8DC62C27EC01AD68 /* husk-tl-opensles.c in Sources */,

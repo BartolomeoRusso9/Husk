@@ -558,6 +558,7 @@ struct JITSettings: View {
     @AppStorage(JITCoordinator.autoEnableKey) private var autoJIT = false
     @AppStorage(JITCoordinator.trollStoreAutoKey) private var trollStoreJIT = true
     @State private var keepAttached = JITBootstrap.keepDebuggerAttached
+    @AppStorage(JITLess.key) private var jitless = false
 
     private var pairingLabel: String {
         switch jit.pairingSource {
@@ -574,6 +575,17 @@ struct JITSettings: View {
             }
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
+
+            Section {
+                Toggle("JIT-less Mode", isOn: $jitless)
+                DetailRow(label: "Games made for it", value: JITLess.libraryCount > 0 ? "Geometry Dash" : "none in this build", mono: false)
+            } header: {
+                Text("Experimental")
+            } footer: {
+                Text("Android games run without JIT: their code was converted ahead of time and is signed with Husk, so no "
+                   + "debugger is needed. Only games converted for this build work this way (Geometry Dash 2.207 and 2.2081, "
+                   + "without Geode). While this is on, Husk makes no executable memory, even when JIT is on.")
+            }
 
             Section {
                 Picker("Method", selection: $jit.method) {

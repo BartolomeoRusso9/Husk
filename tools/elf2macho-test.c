@@ -5,7 +5,8 @@
  * the app uses too; this is the Mac harness for it.
  *
  *   tools/regress/build.sh tools/elf2macho-test.c <out>           (it links the translation layer)
- *   elf2macho-test <lib.so> <out.dylib> [--ios]       write it (macOS: also ad-hoc signed; --ios marks it for iOS, unsigned)
+ *   elf2macho-test <lib.so> <out.dylib> [--ios]       write it (macOS: also ad-hoc signed; --ios marks it for iOS, unsigned);
+ *                                                     an output ending in / names it aot-<hash>-<lib>.dylib there, as the app wants
  *   elf2macho-test --load <out.dylib> <lib.so> [fn [arg]]   dlopen it, check it against a fresh build, call fn(arg) from the
  *                                                     dylib's code (a leaf that needs no relocation: mpg123_plain_strerror -1)
  */
@@ -225,6 +226,11 @@ int main(int argc, char **argv)
     elf E; if (!elf_open(&E, argv[1])) return 1;
     const char *slash = strrchr(argv[1], '/');
     tl_ld_aot_image A; char err[200];
+    /* an output ending in / is a folder: the dylib is named as the app looks for it, aot-<hash of the .so>-<library>.dylib */
+    char out[1200]; size_t ol = strlen(argv[2]);
+    if (ol && argv[2][ol - 1] == '/') snprintf(out, sizeof(out), "%saot-%016llx-%s.dylib", argv[2], (unsigned long long)tl_aot_hash(E.file, E.flen), slash ? slash + 1 : argv[1]);
+    else snprintf(out, sizeof(out), "%s", argv[2]);
+    argv[2] = out;
     if (!tl_aot_make_dylib(slash ? slash + 1 : argv[1], E.file, E.flen, argv[2], ios, &A, err, sizeof(err))) { fprintf(stderr, "%s\n", err); return 1; }
     printf("%s: image at vaddr 0x%llx, %zu + %zu stub + 1 pages (%zu KiB, PT_LOAD align up to 0x%llx), %s\n"
            "  rewritten: %zu x18 (%zu not), %zu svc (%zu out of range), %zu tpidr, %zu adrp, %zu adr (%zu not); %zu pages mix code and data\n",

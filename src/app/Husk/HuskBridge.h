@@ -113,4 +113,7 @@ void husk_balloon_set_bytes(int64_t target_bytes);
 #include "../../translation-layer-next/husk-tl-unity-app.h"
 #include "../../translation-layer-next/husk-console-host.h"
 
+/* Husk 3.2's JIT-less mode (JITLess.swift): where the loader finds libraries made into dylibs ahead of time. */
+void tl_ld_set_aot_dir(const char *dir);
+
 #endif /* HUSK_BRIDGE_H */

@@ -1908,8 +1908,15 @@ static bool aot_import(const char *name, const uint8_t *file, size_t flen, uint6
     static bool env_read;
     if (!env_read) { env_read = true; if (!g_aot_dir && getenv("TL_AOT_DIR")) tl_ld_set_aot_dir(getenv("TL_AOT_DIR")); }   /* Mac harnesses */
     if (!g_aot_dir) return false;
-    char path[1024]; snprintf(path, sizeof(path), "%s/%s.dylib", g_aot_dir, base_name(name));
-    struct stat st; if (stat(path, &st) != 0) return false;
+    /* aot-<the .so's hash>-<library>.dylib, so dylibs of several versions of a game can sit in one folder (the app's Frameworks);
+     * or <library>.dylib, as the Mac harnesses name them */
+    uint64_t hash = tl_aot_hash(file, flen);
+    char path[1024]; struct stat st;
+    snprintf(path, sizeof(path), "%s/aot-%016llx-%s.dylib", g_aot_dir, (unsigned long long)hash, base_name(name));
+    if (stat(path, &st) != 0) {
+        snprintf(path, sizeof(path), "%s/%s.dylib", g_aot_dir, base_name(name));
+        if (stat(path, &st) != 0) { tl_log_line("ld: %s: no dylib made ahead of time (aot-%016llx-%s.dylib)", name, (unsigned long long)hash, base_name(name)); return false; }
+    }
     void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!h) { tl_log_line("ld: %s: its dylib does not load: %s", name, dlerror()); return false; }
     const struct mach_header_64 *mh = dyld_header_of(path);
@@ -1922,7 +1929,7 @@ static bool aot_import(const char *name, const uint8_t *file, size_t flen, uint6
                     : memcmp(M->magic, TL_AOT_MAGIC, 8) || M->version != TL_AOT_VERSION || M->page != PAGE ? "it was made by another version of Husk"
                     : M->so_size != flen || M->base_vaddr != base_vaddr || M->npages != npages || M->nstub != nstub || M->size != size
                       || isz != size || dsz != size || (size_t)(w - x) != size ? "it does not match the library"
-                    : M->so_hash != tl_aot_hash(file, flen) ? "it was made from another version of the library" : NULL;
+                    : M->so_hash != hash ? "it was made from another version of the library" : NULL;
     if (why) { tl_log_line("ld: %s: its dylib is not used: %s", name, why); return false; }   /* (it stays loaded: dyld cannot be asked to forget it safely) */
     *rx = x; *rw = w;
     return true;

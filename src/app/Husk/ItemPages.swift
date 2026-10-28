@@ -288,7 +288,7 @@ struct GamePage: View {
         .id(jit.attachGeneration)
         .onAppear {
             // Kept until JIT is on: this page is rebuilt when it attaches (.id above), and plays then.
-            guard Router.shared.autoPlay == app.id, Launcher.jitOn, blockedBy == nil else { return }
+            guard Router.shared.autoPlay == app.id, Launcher.jitOn || JITLess.enabled, blockedBy == nil else { return }
             Router.shared.autoPlay = nil
             play()
         }
@@ -388,7 +388,7 @@ struct GamePage: View {
             }
         } else if blockedBy != nil {
             BigButton(title: "Close Husk to Play", systemImage: "xmark.circle", prominent: false) { confirmQuit = true }
-        } else if !Launcher.jitOn {
+        } else if !Launcher.jitOn && !JITLess.enabled {
             if jit.busy {
                 HStack(spacing: 10) { ProgressView(); Text(jit.status ?? "Turning on JIT…").foregroundStyle(.secondary) }
                     .frame(maxWidth: .infinity).frame(height: 50)
