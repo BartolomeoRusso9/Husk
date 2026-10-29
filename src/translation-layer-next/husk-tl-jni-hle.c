@@ -209,6 +209,19 @@ static void Display_getDisplayId(tl_jcall *c) { c->ret = vi(0); }
 static void Display_getWidth(tl_jcall *c) { c->ret = vi(H.width); }
 static void Display_getHeight(tl_jcall *c) { c->ret = vi(H.height); }
 static void Display_getName(tl_jcall *c) { c->ret = vl(STR("Built-in Screen")); }
+/* One mode, the screen's own: newer players ask the display for its modes and read the first one. A null answer (the
+ * unimplemented default) is what they then dereference. */
+static void Display_mode(tl_jcall *c)
+{
+    jobj *m = tl_jni_new_object(C("android/view/Display$Mode"));
+    c->ret = vl(m);
+}
+static void Display_getSupportedModes(tl_jcall *c)
+{
+    jobj *a = tl_jni_new_obj_array(C("android/view/Display$Mode"), 1);
+    a->oarr.v[0] = tl_jni_new_object(C("android/view/Display$Mode"));
+    c->ret = vl(a);
+}
 static void WindowManager_getDefaultDisplay(tl_jcall *c) { c->ret = vl(H.display); }
 
 /* ----------------------------------------------------- package information */
@@ -943,6 +956,9 @@ static void Class_forName(tl_jcall *c)
 static const tl_jhle k_hle[] = {
     M("java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Class;", Class_forName),
     M("java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Object;", Class_forName),
+    /* Newer Unity players (2021 and on) look a class up the way Class.forName(String, boolean initialize, ClassLoader)
+     * declares it; the initialize flag and the loader change nothing here, so the one-argument answer serves both. */
+    M("java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;", Class_forName),
     M("java/lang/System", "load", "(Ljava/lang/String;)V", System_load),
     M("java/lang/System", "loadLibrary", "(Ljava/lang/String;)V", System_loadLibrary),
     M("com/sybogames/chili/migration/KilooPlatformAndroidBridge", "<init>", "()V", Noop),
@@ -1028,6 +1044,8 @@ static const tl_jhle k_hle[] = {
     M("android/view/Display", "getDisplayId", "()I", Display_getDisplayId),
     M("android/view/Display", "getWidth", "()I", Display_getWidth), M("android/view/Display", "getHeight", "()I", Display_getHeight),
     M("android/view/Display", "getName", "()Ljava/lang/String;", Display_getName),
+    M("android/view/Display", "getMode", "()Landroid/view/Display$Mode;", Display_mode),
+    M("android/view/Display", "getSupportedModes", "()[Landroid/view/Display$Mode;", Display_getSupportedModes),
     M("android/view/WindowManager", "getDefaultDisplay", "()Landroid/view/Display;", WindowManager_getDefaultDisplay),
     M("android/content/pm/PackageManager", "getApplicationInfo", "(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;", PM_getApplicationInfo),
     M("android/content/pm/PackageManager", "hasSystemFeature", "(Ljava/lang/String;)Z", PM_hasSystemFeature),
