@@ -81,7 +81,7 @@
 
 #define CS_HASHTYPE_SHA256          2
 #define CS_SHA256_LEN               32
-#define CS_PAGE_SIZE_LOG2           14  /* 16384 bytes (16 KiB) */
+#define CS_PAGE_SIZE_LOG2           12  /* 4096 bytes (4 KiB) */
 #define CS_PAGE_SIZE                (1 << CS_PAGE_SIZE_LOG2)
 
 #define CS_ADHOC                    0x2
@@ -949,7 +949,7 @@ bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, c
         buf_put_u32_be(&req_buf, CSMAGIC_REQUIREMENTS);
         buf_put_u32_be(&req_buf, 12 + 8 + req_inner_len);
         buf_put_u32_be(&req_buf, 1);  /* count = 1 */
-        buf_put_u32_be(&req_buf, 1);  /* type = kSecDesignatedRequirementType */
+        buf_put_u32_be(&req_buf, 3);  /* type = kSecDesignatedRequirementType */
         buf_put_u32_be(&req_buf, 20); /* offset = 20 */
 
         buf_put_u32_be(&req_buf, CSMAGIC_REQUIREMENT);
