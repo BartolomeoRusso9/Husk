@@ -584,6 +584,40 @@ const char *tl_ld_symbol_at(const void *addr, const char **lib_name, const void 
     return sym_name(L, best);
 }
 
+/*
+ * A library's own code pages mapped again, for libffi's static trampolines (JNA's callbacks): libffi finds its trampoline table in
+ * /proc/self/maps and maps that page of its library file executable over an anonymous reservation, keeping each trampoline's data
+ * on the page after it. A file can not be made executable here, but a library imported from a dylib already has those pages
+ * signed and executable at rx + off: they are shared at `at` (not copied), which is what the file mapping gives on Android. NULL
+ * when `path` is not such a library or the range is not all code.
+ */
+void *tl_ld_map_code(const char *path, uint64_t off, size_t len, void *at)
+{
+    const char *want = base_name(path);
+    void *r = NULL;
+    pthread_mutex_lock(&G.lock);
+    for (int i = 0; i < G.nlibs && !r; i++) {
+        tl_lib *L = G.libs[i];
+        if (!L->aot) continue;
+        /* the file may be a copy the app made, named after the library (JNA's lib_arm64-v8a_libjnidispatch.so) */
+        const char *b = base_name(L->name);
+        size_t wl = strlen(want), bl = strlen(b);
+        if (strcmp(b, want) && strcmp(L->soname, want) && !(wl > bl && !strcmp(want + wl - bl, b) && want[wl - bl - 1] == '_')) continue;
+        size_t n = (len + PAGE - 1) & ~(size_t)(PAGE - 1);
+        if (off % PAGE || off + n > L->npages * PAGE) break;
+        bool code = true;
+        for (size_t p = off / PAGE; p < (off + n) / PAGE; p++) code = code && (L->pflags[p] & TL_PAGE_X);
+        if (!code) break;
+        vm_address_t a = (vm_address_t)at; vm_prot_t cur, max;
+        kern_return_t kr = vm_remap(mach_task_self(), &a, n, 0, at ? VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE : VM_FLAGS_ANYWHERE, mach_task_self(),
+                                    (vm_address_t)(L->rx + off), FALSE, &cur, &max, VM_INHERIT_NONE);
+        if (kr == KERN_SUCCESS) r = (void *)a;
+        else tl_log_line("ld: %s: its code at +%#llx could not be mapped again (%d)", L->name, (unsigned long long)off, kr);
+    }
+    pthread_mutex_unlock(&G.lock);
+    return r;
+}
+
 /* /proc/self/maps as the app's code sees it: each library it loaded, at its address, under the path it was loaded by (Unity and
  * IL2CPP find their own library there; crash reporters list them). */
 size_t tl_ld_maps(char *buf, size_t n, const char *libdir)

@@ -1235,8 +1235,17 @@ static bool shifted_unmap(void *a, int *ret)
     pthread_mutex_unlock(&g_shifted_lock);
     return false;
 }
+void *tl_ld_map_code(const char *path, uint64_t off, size_t len, void *at);
 static void *b_mmap(void *addr, size_t len, int prot, int flags, int fd, long off)
 {
+    /* A library file mapped executable (libffi's static trampolines): for a library imported from a dylib, its own signed code */
+    if ((prot & PROT_EXEC) && !(flags & 0x20) && fd >= 0 && off >= 0) {
+        char path[PATH_MAX];
+        if (fcntl(fd, F_GETPATH, path) != -1) {
+            void *r = tl_ld_map_code(path, (uint64_t)off, len, (flags & 0x10) ? addr : NULL);
+            if (r) { tl_note_once("a library's file mapped executable (libffi trampolines): its signed code is mapped again"); mm_trace("mmap-code", r, len, prot, flags); return r; }
+        }
+    }
     /* A hooking library's trampolines (Geode): executable memory is a piece of the JIT region, written through the other view. */
     if ((prot & PROT_EXEC) && (flags & 0x20) && !(flags & 0x10) && tl_codewrite_enabled()) {
         uint8_t *rx, *rw;
