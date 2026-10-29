@@ -322,6 +322,20 @@ static bool parse_cert_der(const uint8_t *cert_der, size_t cert_len, cert_meta *
             }
         }
     }
+    /* Find CommonName (CN, OID 2.5.4.3 -> 06 03 55 04 03) inside Subject */
+    for (size_t i = pos; i + 7 < subj_end; i++) {
+        if (cert_der[i] == 0x06 && cert_der[i+1] == 0x03 && cert_der[i+2] == 0x55 &&
+            cert_der[i+3] == 0x04 && cert_der[i+4] == 0x03) {
+            size_t val_pos = i + 5;
+            uint8_t str_tag = 0; size_t str_hlen = 0, str_vlen = 0;
+            if (parse_tlv(cert_der, subj_end, &val_pos, &str_tag, &str_hlen, &str_vlen)) {
+                size_t copy_len = str_vlen < sizeof(out->common_name) - 1 ? str_vlen : sizeof(out->common_name) - 1;
+                memcpy(out->common_name, cert_der + val_pos + str_hlen, copy_len);
+                out->common_name[copy_len] = '\0';
+                break;
+            }
+        }
+    }
     pos = subj_end;
 
     /* SubjectPublicKeyInfo SEQUENCE */
@@ -973,25 +987,23 @@ bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, c
         if (meta.common_name[0]) {
             /* Full Apple designated requirement:
              * designated => identifier "<dylib_id>" and anchor apple generic and certificate leaf[subject.CN] = "<common_name>" and certificate 1[1.2.840.113635.100.6.2.1]
+             * Left-associative binary tree matching Apple codesign:
+             * (((opIdent and opAppleGenericAnchor) and opCertField) and opCertGeneric)
              */
             buf_put_u32_be(&req_expr, 6); /* opAnd */
+            buf_put_u32_be(&req_expr, 6); /* opAnd */
+            buf_put_u32_be(&req_expr, 6); /* opAnd */
 
-            /* Left: opIdent */
+            /* 1. opIdent */
             buf_put_u32_be(&req_expr, 2); /* opIdent */
             buf_put_u32_be(&req_expr, (uint32_t)id_len);
             buf_put(&req_expr, dylib_id, id_len);
             for (size_t p = 0; p < id_pad; p++) buf_put_byte(&req_expr, 0);
 
-            /* Right: opAnd */
-            buf_put_u32_be(&req_expr, 6); /* opAnd */
-
-            /* Left: opAppleGenericAnchor */
+            /* 2. opAppleGenericAnchor */
             buf_put_u32_be(&req_expr, 15); /* opAppleGenericAnchor */
 
-            /* Right: opAnd */
-            buf_put_u32_be(&req_expr, 6); /* opAnd */
-
-            /* Left: opCertField (leaf subject.CN) */
+            /* 3. opCertField (leaf subject.CN) */
             buf_put_u32_be(&req_expr, 11); /* opCertField */
             buf_put_u32_be(&req_expr, 0);  /* cert 0 (leaf) */
             static const char cn_field[] = "subject.CN";
@@ -1007,7 +1019,7 @@ bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, c
             buf_put(&req_expr, meta.common_name, cn_len);
             for (size_t p = 0; p < cn_pad; p++) buf_put_byte(&req_expr, 0);
 
-            /* Right: opCertGeneric (WWDR intermediate OID 1.2.840.113635.100.6.2.1 exists) */
+            /* 4. opCertGeneric (WWDR intermediate OID 1.2.840.113635.100.6.2.1 exists) */
             buf_put_u32_be(&req_expr, 14); /* opCertGeneric */
             buf_put_u32_be(&req_expr, 1);  /* cert 1 (intermediate) */
             static const uint8_t wwdr_oid[10] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x02, 0x01 };
