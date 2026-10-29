@@ -1151,6 +1151,8 @@ bool tl_javaapp_start(const tl_javaapp_config *cfg)
     { void tl_codewrite_enable(void); tl_codewrite_enable(); }
     A.cfg = *cfg;
     snprintf(A.apk, sizeof(A.apk), "%s", cfg->apk_path);
+    /* JIT-less mode: LuaJIT (LÖVE games) runs its interpreter, as the SDL driver already has it do */
+    if (getenv("TL_NO_XMEM")) { void tl_luajit_interpreter_only(void); tl_luajit_interpreter_only(); }
     /* an app whose manifest needs OpenGL ES 3.1 or 3.2 is told the driver has it (ANGLE over Metal stops at 3.0; the shim writes
        its 310/320 es shaders down), as it would otherwise refuse to start */
     { int tl_manifest_gles(const char *); void tl_egl_es3_claim(int); int gv = tl_manifest_gles(cfg->apk_path);

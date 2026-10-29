@@ -1246,6 +1246,14 @@ static void *b_mmap(void *addr, size_t len, int prot, int flags, int fd, long of
             if (r) { tl_note_once("a library's file mapped executable (libffi trampolines): its signed code is mapped again"); mm_trace("mmap-code", r, len, prot, flags); return r; }
         }
     }
+    /* JIT-less mode (TL_NO_XMEM): no executable memory exists, so a guest's own executable mapping (a regex or script JIT:
+     * PCRE2 under Qt) fails outright and the guest falls back to its interpreter; handing it plain memory would have it jump
+     * into data */
+    if ((prot & PROT_EXEC) && (flags & 0x20) && getenv("TL_NO_XMEM")) {
+        tl_note_once("JIT-less: the guest asked for executable memory of its own: refused (EACCES)");
+        tl_set_guest_errno(13);
+        return MAP_FAILED;
+    }
     /* A hooking library's trampolines (Geode): executable memory is a piece of the JIT region, written through the other view. */
     if ((prot & PROT_EXEC) && (flags & 0x20) && !(flags & 0x10) && tl_codewrite_enabled()) {
         uint8_t *rx, *rw;
@@ -1352,7 +1360,7 @@ static int b_mprotect(void *a, size_t l, int prot)
             }
         }
         static int allow = -1;
-        if (allow < 0) allow = getenv("TL_NO_GUEST_JIT") ? 0 : 1;
+        if (allow < 0) allow = getenv("TL_NO_GUEST_JIT") || getenv("TL_NO_XMEM") ? 0 : 1;   /* JIT-less: as a phone with no debugger */
         int r = -1;
         if (allow) {
             TL_ERRNO_BEGIN();
