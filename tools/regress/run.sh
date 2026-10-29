@@ -63,25 +63,36 @@ while IFS='|' read -r name harness apk secs size env expect; do
         secs=$((secs * 3 / 2 + 10))
     fi
     shot="$OUT/$name.png"; log="$OUT/$name.log"; ctl="$OUT/$name.ctl"; rm -f "$shot"
-    printf "wait %d\nshot %s\nquit\n" $((secs * 1000)) "$shot" > "$ctl"
     data=$(mktemp -d /tmp/husk-regress-data.XXXXXX)
-    pkill -9 -x "$harness" 2>/dev/null
-    ( cd "$OUT" && env TL_AUDIO_MUTE=1 TL_JNI_TRACE=0 TL_VERBOSE=0 TL_CTL="$ctl" TL_DATA="$data" $(expand "$env") $jitless \
-        timeout $((secs + 60)) "$bin" "$apk" $((secs + 30)) $size ) > "$log" 2>&1
-    rc=$?
+    # one run of the game: the harness is left running for secs, which takes a screenshot (and its log) at the end
+    play() {
+        printf "wait %d\nshot %s\nquit\n" $((secs * 1000)) "$shot" > "$ctl"
+        pkill -9 -x "$harness" 2>/dev/null
+        ( cd "$OUT" && env TL_AUDIO_MUTE=1 TL_JNI_TRACE=0 TL_VERBOSE=0 TL_CTL="$ctl" TL_DATA="$data" $(expand "$env") $jitless \
+            timeout $((secs + 60)) "$bin" "$apk" $((secs + 30)) $size ) > "$log" 2>&1
+        rc=$?
+    }
+    play
+    retried=""
+    # The Java harness's compositor and the game's own EGL window race, so a run occasionally ends on a black frame even though
+    # the game is on screen (see 3.2-progress.md): one more run decides it.
+    if [ $UPDATE = 0 ] && [ -s "$shot" ] && ! grep -q "=== CRASH\|\*\*\* FATAL" "$log" \
+       && [ "$(python3 -I "$HERE/compare.py" "$shot" "$HERE/ref/$name.png")" = black ]; then
+        mv "$log" "$OUT/$name.first.log"; play; retried=" (after a second run)"
+    fi
     rm -rf "$data" /tmp/husk-frames-* /tmp/husk-mframes-* /tmp/husk-unity-* /tmp/husk-mc-* 2>/dev/null
 
     if grep -q "=== CRASH\|\*\*\* FATAL" "$log"; then
-        result=FAILED; detail="crashed: $(grep -m1 '=== CRASH\|\*\*\* FATAL' "$log")"
+        result=FAILED; detail="crashed: $(grep -m1 '=== CRASH\|\*\*\* FATAL' "$log")$retried"
     elif [ -n "$expect" ] && ! grep -qF "$expect" "$log"; then
-        result=FAILED; detail="the log never says \"$expect\""
+        result=FAILED; detail="the log never says \"$expect\"$retried"
     elif [ ! -s "$shot" ]; then
-        result=FAILED; detail="no screenshot (exit $rc; see $name.log)"
+        result=FAILED; detail="no screenshot (exit $rc; see $name.log)$retried"
     elif [ $UPDATE = 1 ]; then
         sips -Z 400 "$shot" --out "$HERE/ref/$name.png" >/dev/null; result=updated; detail="new reference"
     else
         c=$(python3 -I "$HERE/compare.py" "$shot" "$HERE/ref/$name.png"); 
-        case "$c" in ok*) result=passed; detail="picture ${c#ok }";; *) result=FAILED; detail="picture: $c";; esac
+        case "$c" in ok*) result=passed; detail="picture ${c#ok }$retried";; *) result=FAILED; detail="picture: $c$retried";; esac
     fi
     [ "$result" = FAILED ] && fails=$((fails + 1)) || passes=$((passes + 1))
     printf "%-15s %-8s %s\n" "$name" "$result" "$detail" | tee -a "$OUT/summary.txt"
