@@ -64,6 +64,11 @@ bool tl_unity_start(const tl_unity_config *cfg)
     int n = tl_dexidx_open(cfg->apk_path);
     tl_log_line("unity: %d classes in the APK's DEX", n);
     if (!tl_ld_add_apk(cfg->apk_path)) return false;
+    /* A player built to require ES 3.1 or 3.2 (its manifest's glEsVersion) asks only for those contexts and gives up on "your
+     * device does not match the hardware requirements" when ANGLE refuses: it gets the 3.0 context described as 3.1/3.2 */
+    { int tl_manifest_gles(const char *); void tl_egl_es3_claim(int); int gv = tl_manifest_gles(cfg->apk_path);
+      if (getenv("TL_GLES_CLAIM")) gv = 0x30000 | atoi(getenv("TL_GLES_CLAIM"));   /* TL_GLES_CLAIM=<minor>: as if the manifest said 3.<minor> */
+      if (gv >= 0x30001) { tl_egl_es3_claim(gv & 0xffff); tl_log_line("egl: the manifest asks for OpenGL ES 3.%d: the driver is described so", gv & 0xffff); } }
     if (cfg->angle_egl && !tl_egl_init(cfg->angle_egl, cfg->angle_gles, cfg->frame_dir, cfg->frame_every)) return false;
     tl_jni_init();
     tl_hle_configure(cfg->package_name, cfg->apk_path, cfg->data_dir, cfg->width, cfg->height);

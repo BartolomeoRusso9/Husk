@@ -897,6 +897,17 @@ static void FMODEx_stop(tl_jcall *c)
 }
 
 static void FMOD_isRunning(tl_jcall *c) { c->ret = vz(g_fmodex.running != 0); }
+/* Unity 6's FMOD asks its Java audio manager (org.fmod.FmodAndroidAudioManager) about Bluetooth and input devices; a NULL
+ * instance stops the engine's loading thread. One manager: no Bluetooth, no microphone, the built-in speaker. */
+static void FmodAM_getInstance(tl_jcall *c)
+{
+    static jobj *one;
+    if (!one) one = make("org/fmod/FmodAndroidAudioManager");
+    c->ret = vl(one);
+}
+static void RetFalse(tl_jcall *c) { c->ret = vz(0); }
+static void RetTrue(tl_jcall *c) { c->ret = vz(1); }
+static void FmodAM_noDevice(tl_jcall *c) { c->ret.i = -1; }
 
 /* ------------------------------------------------------------------ tables */
 
@@ -1140,6 +1151,14 @@ static const tl_jhle k_hle[] = {
     M("com/unity3d/player/HFPStatus", "clearHFPStat", "()V", Noop),
     M("org/fmod/FMODAudioDevice", "<init>", "()V", Noop), M("org/fmod/FMODAudioDevice", "start", "()V", FMODEx_start),
     M("org/fmod/FMODAudioDevice", "stop", "()V", FMODEx_stop), M("org/fmod/FMODAudioDevice", "close", "()V", FMODEx_stop), M("org/fmod/FMODAudioDevice", "isRunning", "()Z", FMOD_isRunning),
+    M("org/fmod/FmodAndroidAudioManager", "getInstance", "()Lorg/fmod/FmodAndroidAudioManager;", FmodAM_getInstance),
+    M("org/fmod/FmodAndroidAudioManager", "setUseBluetooth", "(Z)V", Noop), M("org/fmod/FmodAndroidAudioManager", "startBluetoothSco", "()V", Noop),
+    M("org/fmod/FmodAndroidAudioManager", "stopBluetoothSco", "()V", Noop), M("org/fmod/FmodAndroidAudioManager", "isBluetoothScoConnected", "()Z", RetFalse),
+    M("org/fmod/FmodAndroidAudioManager", "isInputSampleRateAvailable", "(I)Z", RetFalse),
+    M("org/fmod/FmodAndroidAudioManager", "isBuiltinInputDeviceAvailable", "()Z", RetFalse),
+    M("org/fmod/FmodAndroidAudioManager", "isBluetoothInputDeviceAvailable", "()Z", RetFalse),
+    M("org/fmod/FmodAndroidAudioManager", "getBluetoothInputDeviceId", "()I", FmodAM_noDevice),
+    M("org/fmod/FmodAndroidAudioManager", "isBuiltinSpeakerDevice", "(I)Z", RetTrue),
     M("com/unity3d/player/UnityPlayer", "initializeGoogleAr", "()Z", UnityPlayer_initializeGoogleAr),
     M("bitter/jnibridge/JNIBridge", "newInterfaceProxy", "(J[Ljava/lang/Class;)Ljava/lang/Object;", JNIBridge_newInterfaceProxy),
     M("com/unity3d/player/ReflectionHelper", "getConstructorID", "(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/reflect/Constructor;", Reflection_getConstructorID),
