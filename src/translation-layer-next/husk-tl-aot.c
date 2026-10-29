@@ -252,15 +252,16 @@ static int prepare_one(const char *name, const uint8_t *data, size_t len, const 
     bool have = stat(path, &st) == 0, signed_now = have && read_text(signer, tag, sizeof(tag)) && cert_tag && !strcmp(tag, cert_tag);
     char e2[200] = "";
     bool ok = true;
-    if (!have) {
+    if (!signed_now) {
+        unlink(path);
+        unlink(signer);
         tl_log_line("aot: converting %s (%zu KiB)", name, len >> 10);
         ok = tl_aot_make_dylib(name, data, len, path, TARGET_OS_IPHONE, NULL, e2, sizeof(e2));   /* for the platform this runs on */
-    }
-    if (ok && !signed_now) {
-        unlink(signer);
-        ok = husk_codesign_dylib(path, p12, p12_len, password, e2, sizeof(e2));
-        if (ok && cert_tag) write_text(signer, cert_tag);
-        if (ok) tl_log_line("aot: %s signed", name);
+        if (ok) {
+            ok = husk_codesign_dylib(path, p12, p12_len, password, e2, sizeof(e2));
+            if (ok && cert_tag) write_text(signer, cert_tag);
+            if (ok) tl_log_line("aot: %s signed", name);
+        }
     }
     if (!ok) { snprintf(err, errlen, "%s: %s", name, e2); unlink(path); return -1; }
     return 1;

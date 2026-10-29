@@ -146,6 +146,15 @@ static void buf_put_u64_be(cs_buf *b, uint64_t val) {
     buf_put_u32_be(b, (uint32_t)val);
 }
 
+static void buf_set_u32_be(cs_buf *b, size_t pos, uint32_t val) {
+    if (pos + 4 <= b->n) {
+        b->b[pos]     = (uint8_t)(val >> 24);
+        b->b[pos + 1] = (uint8_t)(val >> 16);
+        b->b[pos + 2] = (uint8_t)(val >> 8);
+        b->b[pos + 3] = (uint8_t)val;
+    }
+}
+
 /* ------------------------------------------------------------------ ASN.1 DER Helpers */
 
 /* Writes an ASN.1 definite length octet sequence */
@@ -219,6 +228,7 @@ typedef struct {
     const uint8_t *issuer_ptr;
     size_t issuer_len;
     char team_id[64];
+    char common_name[256];
     int64_t not_after_epoch;
     bool is_rsa;
 } cert_meta;
@@ -877,6 +887,9 @@ bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, c
     struct segment_command_64 *seg_link = NULL;
     struct linkedit_data_command *cmd_cs = NULL;
     const char *dylib_id = NULL;
+    uint64_t exec_base = 0;
+    uint64_t exec_limit = 0;
+    bool has_exec = false;
 
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         struct load_command *lc = (struct load_command *)cmd_ptr;
@@ -884,6 +897,11 @@ bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, c
             struct segment_command_64 *seg = (struct segment_command_64 *)lc;
             if (strcmp(seg->segname, "__TEXT") == 0) seg_text = seg;
             else if (strcmp(seg->segname, "__LINKEDIT") == 0) seg_link = seg;
+            if (seg->initprot & VM_PROT_EXECUTE) {
+                if (!has_exec || seg->fileoff < exec_base) exec_base = seg->fileoff;
+                if (seg->fileoff + seg->filesize > exec_limit) exec_limit = seg->fileoff + seg->filesize;
+                has_exec = true;
+            }
         } else if (lc->cmd == LC_CODE_SIGNATURE) {
             cmd_cs = (struct linkedit_data_command *)lc;
         } else if (lc->cmd == LC_ID_DYLIB) {
@@ -942,30 +960,86 @@ bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, c
     cs_buf req_buf;
     buf_init(&req_buf);
     if (has_identity) {
+        cs_buf req_expr;
+        buf_init(&req_expr);
+        buf_put_u32_be(&req_expr, CSMAGIC_REQUIREMENT);
+        size_t inner_len_pos = req_expr.n;
+        buf_put_u32_be(&req_expr, 0); /* inner length placeholder */
+        buf_put_u32_be(&req_expr, 1); /* kind = 1 */
+
         size_t id_len = strlen(dylib_id);
         size_t id_pad = (4 - (id_len % 4)) % 4;
-        uint32_t req_inner_len = 20 + (uint32_t)id_len + (uint32_t)id_pad;
 
+        if (meta.common_name[0]) {
+            /* Full Apple designated requirement:
+             * designated => identifier "<dylib_id>" and anchor apple generic and certificate leaf[subject.CN] = "<common_name>" and certificate 1[1.2.840.113635.100.6.2.1]
+             */
+            buf_put_u32_be(&req_expr, 6); /* opAnd */
+
+            /* Left: opIdent */
+            buf_put_u32_be(&req_expr, 2); /* opIdent */
+            buf_put_u32_be(&req_expr, (uint32_t)id_len);
+            buf_put(&req_expr, dylib_id, id_len);
+            for (size_t p = 0; p < id_pad; p++) buf_put_byte(&req_expr, 0);
+
+            /* Right: opAnd */
+            buf_put_u32_be(&req_expr, 6); /* opAnd */
+
+            /* Left: opAppleGenericAnchor */
+            buf_put_u32_be(&req_expr, 15); /* opAppleGenericAnchor */
+
+            /* Right: opAnd */
+            buf_put_u32_be(&req_expr, 6); /* opAnd */
+
+            /* Left: opCertField (leaf subject.CN) */
+            buf_put_u32_be(&req_expr, 11); /* opCertField */
+            buf_put_u32_be(&req_expr, 0);  /* cert 0 (leaf) */
+            static const char cn_field[] = "subject.CN";
+            size_t fld_len = strlen(cn_field);
+            size_t fld_pad = (4 - (fld_len % 4)) % 4;
+            buf_put_u32_be(&req_expr, (uint32_t)fld_len);
+            buf_put(&req_expr, cn_field, fld_len);
+            for (size_t p = 0; p < fld_pad; p++) buf_put_byte(&req_expr, 0);
+            buf_put_u32_be(&req_expr, 1);  /* matchEqual */
+            size_t cn_len = strlen(meta.common_name);
+            size_t cn_pad = (4 - (cn_len % 4)) % 4;
+            buf_put_u32_be(&req_expr, (uint32_t)cn_len);
+            buf_put(&req_expr, meta.common_name, cn_len);
+            for (size_t p = 0; p < cn_pad; p++) buf_put_byte(&req_expr, 0);
+
+            /* Right: opCertGeneric (WWDR intermediate OID 1.2.840.113635.100.6.2.1 exists) */
+            buf_put_u32_be(&req_expr, 14); /* opCertGeneric */
+            buf_put_u32_be(&req_expr, 1);  /* cert 1 (intermediate) */
+            static const uint8_t wwdr_oid[10] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x02, 0x01 };
+            buf_put_u32_be(&req_expr, sizeof(wwdr_oid));
+            buf_put(&req_expr, wwdr_oid, sizeof(wwdr_oid));
+            for (size_t p = 0; p < (4 - (sizeof(wwdr_oid) % 4)) % 4; p++) buf_put_byte(&req_expr, 0);
+            buf_put_u32_be(&req_expr, 0);  /* matchExists */
+        } else {
+            /* Fallback to simple identifier */
+            buf_put_u32_be(&req_expr, 2); /* opIdent */
+            buf_put_u32_be(&req_expr, (uint32_t)id_len);
+            buf_put(&req_expr, dylib_id, id_len);
+            for (size_t p = 0; p < id_pad; p++) buf_put_byte(&req_expr, 0);
+        }
+
+        uint32_t req_inner_len = (uint32_t)req_expr.n;
+        buf_set_u32_be(&req_expr, inner_len_pos, req_inner_len);
+
+        /* SuperBlob wrapper */
         buf_put_u32_be(&req_buf, CSMAGIC_REQUIREMENTS);
         buf_put_u32_be(&req_buf, 12 + 8 + req_inner_len);
         buf_put_u32_be(&req_buf, 1);  /* count = 1 */
         buf_put_u32_be(&req_buf, 3);  /* type = kSecDesignatedRequirementType */
         buf_put_u32_be(&req_buf, 20); /* offset = 20 */
-
-        buf_put_u32_be(&req_buf, CSMAGIC_REQUIREMENT);
-        buf_put_u32_be(&req_buf, req_inner_len);
-        buf_put_u32_be(&req_buf, 1);  /* kind = 1 */
-        buf_put_u32_be(&req_buf, 2);  /* opIdent = 2 */
-        buf_put_u32_be(&req_buf, (uint32_t)id_len);
-        buf_put(&req_buf, dylib_id, id_len);
-        for (size_t p = 0; p < id_pad; p++) buf_put_byte(&req_buf, 0);
+        buf_put(&req_buf, req_expr.b, req_expr.n);
+        buf_free(&req_expr);
     } else {
         /* Ad-hoc requirements vector */
         buf_put_u32_be(&req_buf, CSMAGIC_REQUIREMENTS);
         buf_put_u32_be(&req_buf, 12);
         buf_put_u32_be(&req_buf, 0);  /* count = 0 */
     }
-
     uint8_t req_sha256[32];
     CC_SHA256(req_buf.b, (CC_LONG)req_buf.n, req_sha256);
 
@@ -1078,8 +1152,8 @@ bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, c
     buf_put_u32_be(&cd, 0); /* teamOffset placeholder */
     buf_put_u32_be(&cd, 0); /* spare3 */
     buf_put_u64_be(&cd, 0); /* codeLimit64 */
-    buf_put_u64_be(&cd, seg_text->fileoff);
-    buf_put_u64_be(&cd, seg_text->filesize);
+    buf_put_u64_be(&cd, has_exec ? exec_base : seg_text->fileoff);
+    buf_put_u64_be(&cd, has_exec ? (exec_limit - exec_base) : seg_text->filesize);
     buf_put_u64_be(&cd, 0); /* execSegFlags */
 
     uint32_t ident_off = (uint32_t)cd.n;

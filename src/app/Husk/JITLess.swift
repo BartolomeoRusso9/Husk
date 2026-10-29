@@ -67,7 +67,7 @@ enum JITLess {
             HuskLog.log("sign", "certificate chain from Husk's own signature: \(husk_codesign_chain_from_executable(exe)) certificates")
         }
         // The signer revision is part of the tag: libraries signed by an older signer are signed again
-        let tag = cred.tag + "-s3"
+        let tag = cred.tag + "-s4"
         let dir = cacheDirectory.path
         try await Task.detached(priority: .userInitiated) {
             final class Box { let report: (String) -> Void; init(_ r: @escaping (String) -> Void) { report = r } }
