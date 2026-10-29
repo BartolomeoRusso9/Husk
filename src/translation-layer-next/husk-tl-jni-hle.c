@@ -496,6 +496,17 @@ static void SystemClock_elapsedRealtimeNanos(tl_jcall *c) { struct timespec ts; 
 static void System_currentTimeMillis(tl_jcall *c) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); jvalue v; v.j = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000; c->ret = v; }
 static void System_nanoTime(tl_jcall *c) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); jvalue v; v.j = (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec; c->ret = v; }
 static void UnityPlayer_initializeGoogleAr(tl_jcall *c) { c->ret = vz(0); }
+/* Unity 6 loads a plugin through Java (UnityPlayer.loadLibrary -> System.loadLibrary, false on failure), so the plugin's
+ * JNI_OnLoad runs: Firebase keeps the JavaVM it is given there, and without it crashes on its first JNI call. */
+static void UnityPlayer_loadLibrary(tl_jcall *c)
+{
+    const char *n = S(c->args[0].l);
+    size_t l = n ? strlen(n) : 0;
+    char base[200];
+    if (l > 3 && !strcmp(n + l - 3, ".so")) snprintf(base, sizeof(base), "%s", n);
+    else snprintf(base, sizeof(base), "%s%s.so", strncmp(n ? n : "", "lib", 3) ? "lib" : "", n ? n : "");
+    c->ret = vz(n && load_native_library(base));
+}
 
 /* JNIBridge builds Java proxies for interfaces C# implements. A proxy that never answers is
  * enough until something calls through one. */
@@ -1160,6 +1171,7 @@ static const tl_jhle k_hle[] = {
     M("org/fmod/FmodAndroidAudioManager", "getBluetoothInputDeviceId", "()I", FmodAM_noDevice),
     M("org/fmod/FmodAndroidAudioManager", "isBuiltinSpeakerDevice", "(I)Z", RetTrue),
     M("com/unity3d/player/UnityPlayer", "initializeGoogleAr", "()Z", UnityPlayer_initializeGoogleAr),
+    M("com/unity3d/player/UnityPlayer", "loadLibrary", "(Ljava/lang/String;)Z", UnityPlayer_loadLibrary),
     M("bitter/jnibridge/JNIBridge", "newInterfaceProxy", "(J[Ljava/lang/Class;)Ljava/lang/Object;", JNIBridge_newInterfaceProxy),
     M("com/unity3d/player/ReflectionHelper", "getConstructorID", "(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/reflect/Constructor;", Reflection_getConstructorID),
     M("com/unity3d/player/ReflectionHelper", "getMethodID", "(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/reflect/Method;", Reflection_getMethodID),
