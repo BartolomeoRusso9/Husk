@@ -66,10 +66,12 @@ enum JITLess {
             chainLoaded = true
             HuskLog.log("sign", "certificate chain from Husk's own signature: \(husk_codesign_chain_from_executable(exe)) certificates")
         }
-        // The signer revision is part of the tag: libraries signed by an older signer are signed again
-        let tag = cred.tag + "-s5"
+        // The signer revision and the running app's bundle ID are part of the tag: libraries signed by an older signer, or
+        // under another install's identifier (SideStore appends the team, a TrollStore/enterprise install may not), are signed again.
+        let ident = Bundle.main.bundleIdentifier ?? "com.husk.app"
+        let tag = cred.tag + "-s12-" + ident
         let dir = cacheDirectory.path
-        try await Task.detached(priority: .userInitiated) {
+        try await Task.detached(priority: .userInitiated) { [ident] in
             final class Box { let report: (String) -> Void; init(_ r: @escaping (String) -> Void) { report = r } }
             let box = Box(progress)
             let user = Unmanaged.passRetained(box).toOpaque()
@@ -81,12 +83,14 @@ enum JITLess {
             let n = cPaths.withUnsafeMutableBufferPointer { paths -> Int32 in
                 paths.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: paths.count) { list in
                     cred.p12.withUnsafeBytes { p12 in
-                        husk_aot_prepare(list, Int32(paths.count), dir, p12.bindMemory(to: UInt8.self).baseAddress, p12.count,
-                                         cred.password, tag, { user, index, total, lib in
-                                             guard let user, let lib else { return }
-                                             let box = Unmanaged<Box>.fromOpaque(user).takeUnretainedValue()
-                                             box.report("Preparing \(String(cString: lib)) (\(index + 1) of \(total))")
-                                         }, user, &err, err.count)
+                        ident.withCString { identC in
+                            husk_aot_prepare(list, Int32(paths.count), dir, p12.bindMemory(to: UInt8.self).baseAddress, p12.count,
+                                             cred.password, tag, identC, { user, index, total, lib in
+                                                 guard let user, let lib else { return }
+                                                 let box = Unmanaged<Box>.fromOpaque(user).takeUnretainedValue()
+                                                 box.report("Preparing \(String(cString: lib)) (\(index + 1) of \(total))")
+                                             }, user, &err, err.count)
+                        }
                     }
                 }
             }

@@ -141,6 +141,7 @@
 		9F4983AE1B8B211FB3875518 /* husk-tl-python.c in Sources */ = {isa = PBXBuildFile; fileRef = 77487CDE2CFA1499255EB794 /* husk-tl-python.c */; };
 		9FA806201E1AF87FE7581742 /* husk-tl-jni-security.c in Sources */ = {isa = PBXBuildFile; fileRef = 85D8F83C8952092997CE071C /* husk-tl-jni-security.c */; };
 		9FEF908189C2E5FC922BE76C /* husk-tl-flutter.c in Sources */ = {isa = PBXBuildFile; fileRef = 4476B48BE189C26B8AF64804 /* husk-tl-flutter.c */; };
+		A54C512C3F8A473DA99EDE1E /* husk-tl-codesign-wwdr.inc in Resources */ = {isa = PBXBuildFile; fileRef = 32E9612FD8E1C13F34DBB916 /* husk-tl-codesign-wwdr.inc */; };
 		A593A625D4A8E73F69E71D23 /* husk-tl-dvm-sensors.m in Sources */ = {isa = PBXBuildFile; fileRef = 98CA30D667315D8B8BBBA19C /* husk-tl-dvm-sensors.m */; };
 		A687EB34AE28E4CBBA4136BF /* husk-tl-geode.c in Sources */ = {isa = PBXBuildFile; fileRef = 9235AEC134C86769DDF7E880 /* husk-tl-geode.c */; };
 		A6EEA5B31AF4AC4AA056F674 /* husk-tl-dvm-sqlite.c in Sources */ = {isa = PBXBuildFile; fileRef = DC6A345F190285ADF810B168 /* husk-tl-dvm-sqlite.c */; };
@@ -310,6 +311,7 @@
 		319324C01D99446B862A6278 /* TechnicalDetails.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TechnicalDetails.swift; sourceTree = "<group>"; };
 		328C4FFE40DC336DFEBD2289 /* husk-tl-flutter-codec.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-flutter-codec.h"; sourceTree = "<group>"; };
 		32BB1ED991BD014DD4FFE311 /* husk-tl-dvm-internal.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-dvm-internal.h"; sourceTree = "<group>"; };
+		32E9612FD8E1C13F34DBB916 /* husk-tl-codesign-wwdr.inc */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.pascal; path = "husk-tl-codesign-wwdr.inc"; sourceTree = "<group>"; };
 		332A592567163CFFEA536B06 /* husk-tl-godot.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-godot.h"; sourceTree = "<group>"; };
 		336AB2FDC58A5C08D55FF8F9 /* icon-tintedlight.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-tintedlight.png"; sourceTree = "<group>"; };
 		34D8768F029169936D6A3524 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
@@ -708,6 +710,7 @@
 				9217F354B8587F75369229F8 /* husk-tl-cocos-text.c */,
 				6B7990E89ED6098029981E38 /* husk-tl-cocos.c */,
 				A33191A0A3B6B70EEAB85D43 /* husk-tl-cocos.h */,
+				32E9612FD8E1C13F34DBB916 /* husk-tl-codesign-wwdr.inc */,
 				26587E5CDEE5CA1A2C8A2838 /* husk-tl-codesign.c */,
 				1B5E836259D10DC79704F60E /* husk-tl-codesign.h */,
 				6492416C2454F2656C7DB40A /* husk-tl-codewrite.c */,
@@ -1022,6 +1025,7 @@
 				7F4F03D8314FE02DAA0314FE /* Localizable.strings in Resources */,
 				50A3A90912B5C9D90B87D9BF /* cacert.pem in Resources */,
 				E2C01F517E73992A29E22EC2 /* husk-jit.js in Resources */,
+				A54C512C3F8A473DA99EDE1E /* husk-tl-codesign-wwdr.inc in Resources */,
 				7A7A40B3B76C8BA2D7262907 /* husk-tl-egl-es31.inc in Resources */,
 				61B170D2F117D85F651CD6E6 /* icon-cleardark.png in Resources */,
 				02324735942750D6BB676FFA /* icon-clearlight.png in Resources */,

@@ -1569,12 +1569,13 @@ static uint64_t bind_symbol(tl_lib *L, uint32_t symidx, bool *failed)
     return val;
 }
 
-/* A copied page's data is relocated in its copy, which is what the rewritten code reads. In an imported dylib the page itself is
- * mapped too (writable unless it holds code), and code that does not compute its data addresses with adrp/adr -- a literal load in the
- * same page, a pointer table handed to the unwinder -- reads that one: give it the same relocations, the way the JIT region's two
- * views of one memory would. */
+/* A copied page's data is relocated in its copy, which is what the rewritten code reads. In an older dylib layout the original
+ * data page was writable too, and code that does not compute its data addresses with adrp/adr -- a literal load in the same page --
+ * read that one, so the same relocation was applied there. The ld-style AOT dylib maps the whole image as r-x __TEXT (AMFI execSeg),
+ * so writing the original page is a SIGBUS; only the copy is writable. */
 static void reloc_both(tl_lib *L, uint64_t off, size_t bytes)
 {
+    if (L->aot) return;
     if (!mixed_page(L, (size_t)(off / PAGE)) || (L->pflags[off / PAGE] & TL_PAGE_X)) return;   /* executable in the dylib: read-only */
     if (off + bytes > L->npages * PAGE) return;
     memcpy(L->rw + off, L->dup + off, bytes);
@@ -2246,7 +2247,17 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
             mix[p] = 1; n_mixed++;
             if (flags[p] & TL_PAGE_X) n_shared++;
         }
-        if (!n_shared) { memset(mix, 0, npages); n_mixed = 0; }   /* code and data on separate pages: relocated in place */
+        if (!n_shared && !g_aot.on && !g_aot_dir) { memset(mix, 0, npages); n_mixed = 0; }   /* code and data on separate pages: relocated in place */
+        /* A dylib's CodeDirectory execSeg is one file range covering every executable segment. With file offsets matching vaddrs,
+         * that range includes the data pages between __TEXT and later __TEXT_EXEC. Those pages cannot be writable (AMFI) and cannot
+         * be moved in the file (dyld requires increasing file offsets), so every data page of the image is copied after it and the
+         * original is mapped read-only. Build and import must agree on which pages were copied (n_mixed in the manifest). */
+        if (g_aot.on || g_aot_dir) {
+            for (size_t p = 0; p < npages; p++) {
+                if (flags[p] & TL_PAGE_X) continue;
+                if (!mix[p]) { mix[p] = 1; n_mixed++; }
+            }
+        }
     }
     if (n_mixed) tl_log_line("ld: %s: %zu page%s hold%s code and writable data both (built for 4 KiB pages), so its %zu data page%s "
                              "are copied after the image", name, n_shared, n_shared == 1 ? "" : "s", n_shared == 1 ? "s" : "",
