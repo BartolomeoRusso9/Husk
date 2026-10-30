@@ -105,12 +105,16 @@ static void *il2_sym(tl_lib *il2, const char *name)
     return p;
 }
 
+static int g_il2_hooks;
+
 static void il2cpp_host_hooks(void)
 {
     /* Uncaught C# otherwise aborts as Il2CppExceptionWrapper with no message. */
+    if (g_il2_hooks) return;
     tl_lib *il2 = tl_ld_find_lib("libil2cpp.so");
     if (!il2) il2 = tl_ld_find_lib("/data/app/lib/arm64/libil2cpp.so");
     if (!il2) return;
+    g_il2_hooks = 1;
     void (*reg)(void (*)(const char *)) = (void (*)(void (*)(const char *)))il2_sym(il2, "il2cpp_register_log_callback");
     if (reg) { reg(il2cpp_log_cb); tl_log_line("unity: IL2CPP log callback installed"); }
     void (*pol)(int) = (void (*)(int))il2_sym(il2, "il2cpp_runtime_unhandled_exception_policy_set");
@@ -130,6 +134,15 @@ static void il2cpp_host_hooks(void)
     tl_log_line("unity: IL2CPP dump fmt=%d stack=%d cxa=%d term=%d raise=%d unhandled=%d catch=%d",
                 il2_fmt_ex != NULL, il2_fmt_st != NULL, il2_cxa_cur != NULL, set_term != NULL, il2_raise != NULL,
                 il2_unhandled != NULL, il2_begin_catch != NULL && il2_end_catch != NULL);
+}
+
+static void il2cpp_on_lib_init(tl_lib *L)
+{
+    const char *n = tl_ld_lib_name(L);
+    if (!n) return;
+    const char *b = strrchr(n, '/');
+    b = b ? b + 1 : n;
+    if (!strcmp(b, "libil2cpp.so")) il2cpp_host_hooks();
 }
 
 static void keyboard_install(void);
@@ -166,6 +179,7 @@ bool tl_unity_start(const tl_unity_config *cfg)
     tl_hle_configure(cfg->package_name, cfg->apk_path, cfg->data_dir, cfg->width, cfg->height);
     tl_jni_hle_install();
     keyboard_install();
+    tl_ld_on_init(il2cpp_on_lib_init);
 
     /* new UnityPlayer(activity): the Java side's own constructor calls loadNative(dir),
      * which is System.load(dir + "/libmain.so") followed by NativeLoader.load(dir). */

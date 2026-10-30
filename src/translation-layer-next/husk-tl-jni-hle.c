@@ -521,6 +521,11 @@ static void v8_jitless(tl_lib *L, const char *base)
 }
 static bool load_native_library(const char *base)
 {
+    const char *leaf = strrchr(base, '/');
+    leaf = leaf ? leaf + 1 : base;
+    /* System.loadLibrary("libc") becomes liblibc.so; treat that as the system libc. */
+    if (!strcmp(leaf, "liblibc.so")) leaf = "libc.so";
+    if (tl_bionic_is_system_lib(leaf)) return true;
     tl_lib *L = tl_ld_load(base);
     if (!L) return false;
     tl_ld_init(L);
@@ -638,6 +643,8 @@ static void Locale_getDefault(tl_jcall *c) { c->ret = vl(make("java/util/Locale"
 static void Locale_toLanguageTag(tl_jcall *c) { c->ret = vl(STR("en-US")); }
 static void Locale_getLanguage(tl_jcall *c) { c->ret = vl(STR("en")); }
 static void Locale_getCountry(tl_jcall *c) { c->ret = vl(STR("US")); }
+static void Locale_getScript(tl_jcall *c) { c->ret = vl(STR("")); }
+static void Locale_toString(tl_jcall *c) { c->ret = vl(STR("en_US")); }
 static void PreciseLocale_getRegion(tl_jcall *c) { c->ret = vl(STR("US")); }
 static void Chipset_name(tl_jcall *c) { c->ret = vl(STR("Apple")); }
 static void Log_getStackTraceString(tl_jcall *c)
@@ -970,6 +977,9 @@ static void Coll_size(tl_jcall *c) { c->ret = vi(0); }
 static void Coll_isEmpty(tl_jcall *c) { c->ret = vz(1); }
 static void SP_getAll(tl_jcall *c) { c->ret = vl(make("java/util/HashMap")); }
 static void Intent_getExtras(tl_jcall *c) { c->ret = vl(NULL); }
+static void Intent_init_action(tl_jcall *c) { tl_jni_set_field(c->self, "action", "Ljava/lang/String;", vl(c->args[0].l)); }
+static void Intent_self(tl_jcall *c) { c->ret = vl(c->self); }
+static void PM_queryIntentActivities(tl_jcall *c) { (void)c; c->ret = vl(make("java/util/ArrayList")); }
 static void Context_getObbDir(tl_jcall *c) { char p[700]; snprintf(p, sizeof(p), "%s/obb", H.ext_files); mkdirs(p); c->ret = vl(new_file(p)); }
 static void Context_getObbDirs(tl_jcall *c)
 {
@@ -1113,7 +1123,7 @@ static const struct { const char *name, *super; } k_classes[] = {
     { "android/content/pm/PackageInfo", "java/lang/Object" }, { "android/content/pm/InstallSourceInfo", "java/lang/Object" },
     { "android/view/Display", "java/lang/Object" },
     { "android/view/WindowManager", "java/lang/Object" }, { "android/view/Window", "java/lang/Object" },
-    { "android/os/Looper", "java/lang/Object" }, { "android/os/Handler", "java/lang/Object" },
+    { "android/os/Looper", "java/lang/Object" }, { "android/os/Handler", "java/lang/Object" }, { "android/os/Bundle", "java/lang/Object" },
     { "android/os/Build", "java/lang/Object" }, { "android/os/Build$VERSION", "java/lang/Object" },
     { "android/os/Environment", "java/lang/Object" }, { "android/os/Process", "java/lang/Object" },
     { "android/content/SharedPreferences", "java/lang/Object" }, { "android/content/Intent", "java/lang/Object" },
@@ -1123,7 +1133,8 @@ static const struct { const char *name, *super; } k_classes[] = {
     { "java/lang/StringBuilder", "java/lang/Object" }, { "java/io/InputStream", "java/lang/Object" },
     { "java/io/ByteArrayInputStream", "java/io/InputStream" }, { "java/io/FileNotFoundException", "java/lang/Exception" },
     { "java/util/Scanner", "java/lang/Object" }, { "java/util/HashMap", "java/lang/Object" }, { "java/util/HashSet", "java/lang/Object" },
-    { "java/util/Map", "java/lang/Object" }, { "java/util/Set", "java/lang/Object" }, { "java/util/NoSuchElementException", "java/lang/Exception" },
+    { "java/util/Map", "java/lang/Object" }, { "java/util/Set", "java/lang/Object" }, { "java/util/List", "java/lang/Object" },
+    { "java/util/ArrayList", "java/lang/Object" }, { "java/util/NoSuchElementException", "java/lang/Exception" },
     { "android/hardware/display/DisplayManager", "java/lang/Object" }, { "android/media/AudioManager", "java/lang/Object" },
     { "android/media/AudioDeviceInfo", "java/lang/Object" }, { "android/net/Uri", "java/lang/Object" },
     { "org/fmod/FMODAudioDevice", "java/lang/Object" }, { "android/app/AlertDialog$Builder", "java/lang/Object" }, { "android/app/Dialog", "java/lang/Object" }, { "android/app/AlertDialog", "android/app/Dialog" },
@@ -1161,6 +1172,8 @@ static const tl_jhle k_hle[] = {
     M("java/util/Locale", "toLanguageTag", "()Ljava/lang/String;", Locale_toLanguageTag),
     M("java/util/Locale", "getLanguage", "()Ljava/lang/String;", Locale_getLanguage),
     M("java/util/Locale", "getCountry", "()Ljava/lang/String;", Locale_getCountry),
+    M("java/util/Locale", "getScript", "()Ljava/lang/String;", Locale_getScript),
+    M("java/util/Locale", "toString", "()Ljava/lang/String;", Locale_toString),
     M("com/kokosoft/preciselocale/PreciseLocale", "getLanguage", "()Ljava/lang/String;", Locale_getLanguage),
     M("com/kokosoft/preciselocale/PreciseLocale", "getLanguageID", "()Ljava/lang/String;", Locale_getLanguage),
     M("com/kokosoft/preciselocale/PreciseLocale", "getRegion", "()Ljava/lang/String;", PreciseLocale_getRegion),
@@ -1289,7 +1302,9 @@ static const tl_jhle k_hle[] = {
     M("android/os/Environment", "getExternalStorageDirectory", "()Ljava/io/File;", Env_getExternalStorageDirectory),
     M("android/os/Process", "setThreadPriority", "(II)V", Process_setThreadPriority),
     M("android/os/Process", "myPid", "()I", Process_myPid), M("android/os/Process", "myTid", "()I", Process_myTid),
+    M("java/lang/Object", "<init>", "()V", Noop),
     M("java/lang/Object", "getClass", "()Ljava/lang/Class;", Object_getClass),
+    M("android/os/Bundle", "getString", "(Ljava/lang/String;)Ljava/lang/String;", Intent_getExtras),
     M("java/lang/Class", "getClassLoader", "()Ljava/lang/ClassLoader;", Class_getClassLoader),
     M("android/provider/Settings$Secure", "getString", "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;", Secure_getString),
     M("java/lang/ClassLoader", "findLibrary", "(Ljava/lang/String;)Ljava/lang/String;", ClassLoader_findLibrary),
@@ -1360,6 +1375,14 @@ static const tl_jhle k_hle[] = {
     M("android/content/SharedPreferences", "getAll", "()Ljava/util/Map;", SP_getAll),
     M("android/content/SharedPreferences", "contains", "(Ljava/lang/String;)Z", SP_contains),
     M("android/content/Intent", "getExtras", "()Landroid/os/Bundle;", Intent_getExtras),
+    M("android/content/Intent", "<init>", "(Ljava/lang/String;)V", Intent_init_action),
+    M("android/content/Intent", "addCategory", "(Ljava/lang/String;)Landroid/content/Intent;", Intent_self),
+    M("android/content/Intent", "addFlags", "(I)Landroid/content/Intent;", Intent_self),
+    M("android/content/Intent", "setPackage", "(Ljava/lang/String;)Landroid/content/Intent;", Intent_self),
+    M("android/content/pm/PackageManager", "queryIntentActivities", "(Landroid/content/Intent;I)Ljava/util/List;", PM_queryIntentActivities),
+    M("java/util/ArrayList", "size", "()I", Coll_size), M("java/util/List", "size", "()I", Coll_size),
+    M("java/util/ArrayList", "isEmpty", "()Z", Coll_isEmpty), M("java/util/List", "isEmpty", "()Z", Coll_isEmpty),
+    M("java/util/ArrayList", "iterator", "()Ljava/util/Iterator;", Set_iterator), M("java/util/List", "iterator", "()Ljava/util/Iterator;", Set_iterator),
     M("android/content/Context", "getObbDir", "()Ljava/io/File;", Context_getObbDir), M("android/content/Context", "getObbDirs", "()[Ljava/io/File;", Context_getObbDirs),
     M("android/app/Activity", "setRequestedOrientation", "(I)V", Activity_setRequestedOrientation),
     M("android/hardware/display/DisplayManager", "getDisplay", "(I)Landroid/view/Display;", DM_getDisplay),

@@ -623,8 +623,9 @@ static const char *b_nl_langinfo(int item)
     return "";
 }
 static const char *b_nl_langinfo_l(int item, void *loc) { (void)loc; return b_nl_langinfo(item); }
-/* setlocale as bionic's: the C locale, in UTF-8 or not; "", "C", "POSIX", "C.UTF-8" and "en_US.UTF-8" are the names it knows, and
- * it answers "C.UTF-8" or "C" (Qt reads the answer back: macOS's NULL for an unknown name crashed it) */
+/* setlocale as bionic's: the C locale, in UTF-8 or not; "", "C", "POSIX", "C.UTF-8" and "en_US.UTF-8" are the names it knows.
+ * The name handed back is en_US.UTF-8 (or en_US): Qt reads it and must not see NULL, and IL2CPP CultureInfo cannot construct
+ * from "C" / "C.UTF-8" (Gobandroid: CultureNotFoundException, culture name "c"). */
 static char *b_setlocale(int cat, const char *name)
 {
     static _Atomic int utf8 = 1;
@@ -637,7 +638,21 @@ static char *b_setlocale(int cat, const char *name)
         if (cat == 6) { setlocale(LC_ALL, "C"); if (u) setlocale(LC_CTYPE, "UTF-8"); }
         else setlocale(cat_to_darwin(cat), cat == 0 && u ? "UTF-8" : "C");
     }
-    return atomic_load(&utf8) ? "C.UTF-8" : "C";
+    return atomic_load(&utf8) ? "en_US.UTF-8" : "en_US";
+}
+
+static int locale_is_c(const char *v)
+{
+    return !v || !*v || !strcmp(v, "C") || !strcmp(v, "POSIX")
+        || !strncasecmp(v, "C.", 2) || !strncasecmp(v, "POSIX.", 6);
+}
+/* IL2CPP CultureInfo reads LANG / LC_* before setlocale: a POSIX "C" becomes culture name "c" and throws. */
+static char *b_getenv(const char *name)
+{
+    char *v = getenv(name);
+    if (name && (!strcmp(name, "LANG") || !strncmp(name, "LC_", 3)) && locale_is_c(v))
+        return "en_US.UTF-8";
+    return v;
 }
 static locale_t b_newlocale(int mask, const char *name, locale_t base)
 {
@@ -747,7 +762,7 @@ const tl_bionic_entry tl_tab_str[] = {
     TL_WRAP("strtol", b_strtol), TL_WRAP("strtoll", b_strtoll), TL_WRAP("strtoul", b_strtoul), TL_WRAP("strtoull", b_strtoull),
     TL_WRAP("strtoll_l", b_strtoll_l), TL_WRAP("strtoull_l", b_strtoull_l), TL_WRAP("strtod", b_strtod), TL_WRAP("strtof", b_strtof),
     TL_WRAP("strtold", b_strtold), TL_WRAP("strtold_l", b_strtold_l),
-    TL_DIRECT(getenv), TL_WRAP("setenv", b_setenv), TL_DIRECT(unsetenv), TL_DIRECT(putenv), TL_DATA("environ", &g_environ_var),
+    TL_WRAP("getenv", b_getenv), TL_WRAP("setenv", b_setenv), TL_DIRECT(unsetenv), TL_DIRECT(putenv), TL_DATA("environ", &g_environ_var),
     TL_DIRECT(setjmp), TL_DIRECT(longjmp), TL_DIRECT(_setjmp), TL_DIRECT(_longjmp), TL_DIRECT(fnmatch), TL_DIRECT(getopt_long),
     TL_DATA("optarg", &optarg), TL_DATA("optind", &optind),
     /* math.h */

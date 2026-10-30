@@ -64,6 +64,9 @@ void tl_ld_add_search_dir(const char *dir);
 
 /* Run constructors for a library and anything it needs that has not run. */
 bool tl_ld_init(tl_lib *lib);
+/* After that library's constructors: Unity installs IL2CPP's terminate handler here, because
+ * NativeLoader.load often returns before libil2cpp.so exists. */
+void tl_ld_on_init(void (*fn)(tl_lib *lib));
 
 /* A library already loaded, by file name or soname. */
 tl_lib *tl_ld_find_lib(const char *name);

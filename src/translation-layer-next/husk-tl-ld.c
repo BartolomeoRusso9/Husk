@@ -174,6 +174,9 @@ void tl_ld_set_verbosity(int v) { G.verbosity = v; }
 void tl_ld_set_environment(char **argv, char **envp) { G.argv = argv; G.envp = envp; }
 size_t tl_ld_unresolved_count(void) { return G.unresolved; }
 
+static void (*g_on_init)(tl_lib *);
+void tl_ld_on_init(void (*fn)(tl_lib *lib)) { g_on_init = fn; }
+
 /* The image's bytes at `vaddr`: through the writable view, which for a mixed page is its copy (the dylib's own page there is the
  * unrelocated, executable one). */
 static inline const void *at(const tl_lib *L, uint64_t vaddr) { return waddr(L, vaddr - L->base_vaddr); }
@@ -2916,6 +2919,7 @@ static bool init_locked(tl_lib *L)
     }
     L->state = 4;
     if (G.verbosity >= 1) tl_log_line("ld: %-36s initialised (%s%zu constructors)", L->name, L->init ? "DT_INIT + " : "", (size_t)(L->init_arraysz / 8));
+    if (g_on_init) g_on_init(L);
     return true;
 }
 
