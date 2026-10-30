@@ -78,6 +78,17 @@ void *tl_ld_lib_base(const tl_lib *lib);
 const char *tl_ld_lib_name(const tl_lib *lib);
 const char *tl_ld_symbol_at(const void *addr, const char **lib_name, const void **sym_addr);
 
+/* An imported AOT dylib maps the ELF image r-x (AMFI execSeg). Stores that land there belong on the writable copy of that
+ * page, if the loader made one. NULL if `addr` is not in such a page. Safe to call from a fault handler after libraries
+ * have loaded. */
+void *tl_ld_aot_writable(const void *addr, size_t bytes);
+/* True when `addr` is inside an imported AOT image (including its stub pages). mprotect there cannot change permissions. */
+bool tl_ld_aot_contains(const void *addr);
+/* If `addr` is a fetch from the writable copy of a function (relative C++ vtables
+ * add a slot offset to a vtable that lives in the copy, which lands in the copy of
+ * .text, which is not executable), the executable view of the same offset; otherwise NULL. */
+void *tl_ld_aot_exec(const void *addr);
+
 /*
  * Walk loaded libraries the way dl_iterate_phdr does. The callback gets the load
  * bias (the executable view's address of vaddr 0), the library's name, its program
@@ -138,7 +149,7 @@ bool tl_ld_aot_build(const char *name, const uint8_t *file, size_t flen, tl_ld_a
 /* What a dylib made from a library records about it (section __TEXT,__husk_manifest), so the loader only imports a dylib that was
  * made from this exact file by a compatible loader. */
 #define TL_AOT_MAGIC   "HUSKAOT1"
-#define TL_AOT_VERSION 8u          /* bump whenever the rewrites or the dylib's layout change: an old dylib must not be imported */
+#define TL_AOT_VERSION 9u          /* bump whenever the rewrites or the dylib's layout change: an old dylib must not be imported */
 typedef struct tl_aot_manifest {
     char magic[8];
     uint32_t version, page;            /* TL_AOT_VERSION; 16384 */

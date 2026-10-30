@@ -10,6 +10,7 @@
 #define _DARWIN_C_SOURCE
 #include "husk-tl-bionic.h"
 const char *tl_ld_main_apk(void);
+bool tl_ld_aot_contains(const void *addr);
 #include "husk-tl-internal.h"
 #include "husk-tl-codewrite.h"
 #include "husk-tl-xmem.h"
@@ -1334,10 +1335,13 @@ static int b_mprotect(void *a, size_t l, int prot)
     /* Code a hooking library is about to patch: its permissions stay as they are, and its stores are carried out through
      * the writable view as they fault (husk-tl-codewrite.c). */
     if (tl_codewrite_enabled() && tl_xmem_contains(a)) { mm_trace("mprotect", a, l, prot, 0); return 0; }
+    /* An imported AOT dylib is signed r-x; the guest asking to write its RELRO or patch a constructor is told yes, and
+     * stores go to the writable copies (husk-tl-codewrite). */
+    if (tl_ld_aot_contains(a)) { mm_trace("mprotect", a, l, prot, 0); return 0; }
     if (prot & PROT_EXEC) {
         /* the host's own code (a guest that patches "the linker", which here is Apple's): never touched */
         Dl_info di;
-        if (dladdr(a, &di) && di.dli_fname && !tl_xmem_contains(a)) {
+        if (dladdr(a, &di) && di.dli_fname && !tl_xmem_contains(a) && !tl_ld_aot_contains(a)) {
             { const char *lib = NULL; const void *sa = NULL; const char *sym = tl_ld_symbol_at(__builtin_return_address(0), &lib, &sa);
               static int said; if (said++ < 4) tl_log_line("bionic: mprotect(%p, %#zx, %d) on the host's code (%s %s) asked by %s %s: refused", a, l, prot,
                   di.dli_fname ? strrchr(di.dli_fname, '/') + 1 : "?", di.dli_sname ? di.dli_sname : "?", lib ? lib : "?", sym ? sym : "?"); }

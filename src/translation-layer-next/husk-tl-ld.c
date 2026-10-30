@@ -21,6 +21,7 @@
 #include "husk-tl-internal.h"
 #include "husk-tl-a64.h"
 #include "husk-tl-xmem.h"
+#include "husk-tl-codewrite.h"
 
 /* The project's log sink, and the bionic shim's surface. */
 void  tl_log_line(const char *fmt, ...);
@@ -119,6 +120,7 @@ static inline bool data_page(const tl_lib *L, size_t page);
 static bool in_code(const tl_lib *L, uint64_t vaddr);
 static bool writable_range(const tl_lib *L, uint64_t lo, uint64_t hi);
 static inline bool writable_vaddr(const tl_lib *L, uint64_t va) { return writable_range(L, va, va + 1); }
+static bool redirect_data(const tl_lib *L, uint64_t vaddr);
 
 /*
  * Whether a page's data is kept in a writable copy after the image (see map_library). A library built for 16 KiB pages has code and
@@ -558,8 +560,57 @@ tl_lib *tl_ld_lib_of(const void *addr)
         tl_lib *L = G.libs[i];
         size_t span = L->npages * PAGE;
         if ((a >= L->rx && a < L->rx + span) || (a >= L->rw && a < L->rw + span)) return L;
+        if (L->dup && a >= L->dup && a < L->dup + span) return L;
     }
     return NULL;
+}
+
+void *tl_ld_aot_writable(const void *addr, size_t bytes)
+{
+    if (!addr || bytes == 0) return NULL;
+    const uint8_t *a = addr;
+    for (int i = 0; i < G.nlibs; i++) {
+        tl_lib *L = G.libs[i];
+        if (!L->aot || !L->dup) continue;
+        size_t span = L->npages * PAGE;
+        uint64_t off;
+        if (a >= L->rx && a + bytes <= L->rx + span) off = (uint64_t)(a - L->rx);
+        else if (a >= L->dup && a + bytes <= L->dup + span) off = (uint64_t)(a - L->dup);
+        else continue;
+        if (!mixed_page(L, (size_t)(off / PAGE))) continue;
+        return L->dup + off;
+    }
+    return NULL;
+}
+
+void *tl_ld_aot_exec(const void *addr)
+{
+    if (!addr) return NULL;
+    const uint8_t *a = addr;
+    for (int i = 0; i < G.nlibs; i++) {
+        tl_lib *L = G.libs[i];
+        if (!L->aot || !L->dup) continue;
+        size_t span = L->npages * PAGE;
+        if (a < L->dup || a >= L->dup + span) continue;
+        uint64_t off = (uint64_t)(a - L->dup);
+        uint64_t va = L->base_vaddr + off;
+        if (!in_code(L, va)) continue;
+        return L->rx + off;
+    }
+    return NULL;
+}
+
+bool tl_ld_aot_contains(const void *addr)
+{
+    const uint8_t *a = addr;
+    for (int i = 0; i < G.nlibs; i++) {
+        tl_lib *L = G.libs[i];
+        if (!L->aot) continue;
+        size_t span = (L->npages + L->nstub + 2) * PAGE;
+        if (a >= L->rx && a < L->rx + span) return true;
+        if (L->dup && a >= L->dup && a < L->dup + L->npages * PAGE) return true;
+    }
+    return false;
 }
 
 const char *tl_ld_lib_name(const tl_lib *lib) { return lib ? lib->name : NULL; }
@@ -918,6 +969,10 @@ static inline uint32_t e_ldr_lo12(unsigned rt, unsigned rn, const void *target) 
 {
     return 0xF9400000u | ((uint32_t)(((uintptr_t)target & 0xFFFu) >> 3) << 10) | (rn << 5) | rt;
 }
+static inline uint32_t e_ldr_w_lo12(unsigned rt, unsigned rn, const void *target) /* ldr Wt, [Xn, #:lo12:target] (4-byte aligned) */
+{
+    return 0xB9400000u | ((uint32_t)(((uintptr_t)target & 0xFFFu) >> 2) << 10) | (rn << 5) | rt;
+}
 
 static bool stub_in_range(const uint8_t *site, const uint8_t *stub)
 {
@@ -961,6 +1016,26 @@ static bool adr_stub(tl_lib *L, const uint8_t *site_rx, uint32_t rd, const uint8
         e_adrp(rd, rx, target),                                                 /* adrp Xd, target */
         e_add_lo12(rd, rd, target),                                             /* add Xd, Xd, #:lo12:target */
         0x14000000u | ((uint32_t)back & 0x3FFFFFFu),                            /* b site+4 */
+        0xD503201Fu, 0xD503201Fu, 0xD503201Fu, 0xD503201Fu, 0xD503201Fu,
+    };
+    memcpy(rw, code, 32);
+    *branch = 0x14000000u | ((uint32_t)to & 0x3FFFFFFu);
+    return true;
+}
+
+/* `ldr Xt/Wt, label` of a value that lives on a copied data page: load from the copy (adrp+ldr from the stub). */
+static bool ldr_literal_stub(tl_lib *L, const uint8_t *site_rx, uint32_t rt, const uint8_t *src, bool wide, uint32_t *branch)
+{
+    uint8_t *rx, *rw;
+    if (!stub_slot(L, site_rx, &rx, &rw)) return false;
+    if (!e_adrp_ok(rx, src)) { memset(rw, 0, 32); return false; }
+    int64_t to = ((int64_t)rx - (int64_t)site_rx) / 4;
+    int64_t back = ((int64_t)(site_rx + 4) - (int64_t)(rx + 12)) / 4;
+    uint32_t ldr = wide ? e_ldr_lo12(rt, rt, src) : e_ldr_w_lo12(rt, rt, src);
+    uint32_t code[8] = {
+        e_adrp(rt, rx, src),
+        ldr,
+        0x14000000u | ((uint32_t)back & 0x3FFFFFFu),
         0xD503201Fu, 0xD503201Fu, 0xD503201Fu, 0xD503201Fu, 0xD503201Fu,
     };
     memcpy(rw, code, 32);
@@ -1368,10 +1443,22 @@ static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_ad
                 if (tp >= (uintptr_t)L->rx && tp < (uintptr_t)L->rx + L->npages * PAGE) {
                     size_t tpg = (tp - (uintptr_t)L->rx) / PAGE;
                     uint64_t tv = (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr;
-                    if ((data_page(L, tpg) || writable_range(L, tv, tv + 0x1000)) && !adrp_targets_code(L, w, i, nwords, insn & 0x1Fu, tp)) {
+                    if ((data_page(L, tpg) || writable_range(L, tv, tv + 0x1000) || (mixed_page(L, tpg) && !in_code(L, tv)))
+                        && !adrp_targets_code(L, w, i, nwords, insn & 0x1Fu, tp)) {
                         w[i] = encode_adrp(insn & 0x1Fu, pc, data_view(L, (const void *)tp));
                         (*n_adrp)++;
                     }
+                }
+            } else if ((insn & 0xFF000000u) == 0x18000000u || (insn & 0xFF000000u) == 0x58000000u) { /* ldr Wt/Xt, label */
+                int64_t imm = (int64_t)((insn >> 5) & 0x7FFFFu);
+                if (imm & 0x40000) imm -= 0x80000;
+                uintptr_t tp = (uintptr_t)pc + (uintptr_t)(imm * 4);
+                uint64_t tv = (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr;
+                if (tp >= (uintptr_t)L->rx && tp + 8 <= (uintptr_t)L->rx + L->npages * PAGE && redirect_data(L, tv)) {
+                    uint32_t branch;
+                    bool wide = (insn & 0xFF000000u) == 0x58000000u;
+                    if (ldr_literal_stub(L, pc, insn & 0x1Fu, data_view(L, (const void *)tp), wide, &branch)) { w[i] = branch; (*n_adr)++; }
+                    else L->n_adr_failed++;
                 }
             } else if (insn == 0xD4000001u) {                       /* svc #0 */
                 uint8_t *stub = svc_stub(L, pc);
@@ -1390,9 +1477,9 @@ static void patch_image(tl_lib *L, size_t *n_tpidr, size_t *n_adrp, size_t *n_ad
                 int64_t imm = (int64_t)((((insn >> 5) & 0x7FFFFu) << 2) | ((insn >> 29) & 3u));
                 if (imm & 0x100000) imm -= 0x200000;
                 uintptr_t tp = (uintptr_t)pc + (uintptr_t)imm;
+                uint64_t tv = (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr;
                 if (tp >= (uintptr_t)L->rx && tp < (uintptr_t)L->rx + L->npages * PAGE
-                    && (data_page(L, (tp - (uintptr_t)L->rx) / PAGE) || writable_vaddr(L, (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr))
-                    && !in_code(L, (uint64_t)(tp - (uintptr_t)L->rx) + L->base_vaddr)) {
+                    && redirect_data(L, tv)) {
                     uint32_t branch;
                     if (adr_stub(L, pc, insn & 0x1Fu, data_view(L, (const void *)tp), &branch)) { w[i] = branch; (*n_adr)++; }
                     else L->n_adr_failed++;
@@ -1523,10 +1610,25 @@ static bool writable_range(const tl_lib *L, uint64_t lo, uint64_t hi)
     return true;
 }
 
+/* An access that must name the writable copy: mixed/data/writable, and not a code address. */
+static bool redirect_data(const tl_lib *L, uint64_t vaddr)
+{
+    uint64_t off = vaddr - L->base_vaddr;
+    size_t page = (size_t)(off / PAGE);
+    if (page >= L->npages) return false;
+    if (in_code(L, vaddr)) return false;
+    if (mixed_page(L, page)) return true;
+    return data_page(L, page) || writable_vaddr(L, vaddr);
+}
+
 static uint64_t image_addr(const tl_lib *L, uint64_t vaddr)
 {
     uint64_t off = vaddr - L->base_vaddr;
     size_t page = (size_t)(off / PAGE);
+    /* A function's address is always the executable view, even when a mixed page also
+     * holds data: relative C++ vtables add a slot to a vtable pointer, and that pointer
+     * may name the writable copy, but the method itself must still be called. */
+    if (in_code(L, vaddr)) return (uint64_t)(uintptr_t)(L->rx + off);
     if (page < L->npages && writable_vaddr(L, vaddr)) return (uint64_t)(uintptr_t)waddr(L, off);
     if (page < L->npages && data_page(L, page)) {
         if (L->pflags[page] & TL_PAGE_X)
@@ -2011,6 +2113,9 @@ static bool aot_alloc(size_t bytes, uint8_t **rx, uint8_t **rw)
  * Importing a library made ahead of time (Husk 3.2): when the folder set with tl_ld_set_aot_dir has <library>'s dylib, made by
  * tl_ld_aot_build from this very file, dyld maps it -- signed code, so no executable memory is made here -- and the loader uses the
  * image's pages in place: code pages executable, data pages writable at their own addresses. Then it relocates and initialises as usual.
+ *
+ * Mixed 4 KiB/16 KiB pages split .eh_frame onto the writable copy while code runs from the r-x page. libc++ then cannot
+ * match a throw to its catch (Unity: uncaught Il2CppExceptionWrapper under JIT-less, caught with JIT).
  */
 static char *g_aot_dir;
 void tl_ld_set_aot_dir(const char *dir) { free(g_aot_dir); g_aot_dir = dir && *dir ? strdup(dir) : NULL; }
@@ -2095,6 +2200,8 @@ static bool aot_import(const char *name, const uint8_t *file, size_t flen, uint6
         if (mixed && mixed[p] && !aot_mapped(mh, PAGE + size + p * PAGE, 1)) why = "its segments do not cover the image";
     if (why) { tl_log_line("ld: %s: its dylib is not used: %s", name, why); return false; }   /* (it stays loaded: dyld cannot be asked to forget it safely) */
     *rx = x; *rw = x; *dup = n_mixed ? x + size : NULL;
+    /* Stores into the r-x image (Unity static constructors, RELRO writes) go to the copies, the way Geode stores go through xmem. */
+    tl_codewrite_enable();
     return true;
 }
 
@@ -2113,6 +2220,10 @@ static void fill_data_slots(tl_lib *L)
 
 static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
 {
+    /* Mix/copy decisions and the dylib's stub count must see the AOT folder before aot_import runs,
+     * otherwise a Mac harness that only sets TL_AOT_DIR in the environment disagrees with the dylib
+     * (which was built with g_aot.on) and refuses to load. The app sets the folder itself. */
+    if (!g_aot_dir && getenv("TL_AOT_DIR")) tl_ld_set_aot_dir(getenv("TL_AOT_DIR"));
     if (G.nlibs >= MAX_LIBS) { tl_log_line("ld: too many libraries"); return NULL; }
     const elf_ehdr *eh = (const elf_ehdr *)file;
     if (flen < sizeof(*eh) || memcmp(file, "\x7f""ELF", 4) != 0 || eh->e_ident[4] != 2 || eh->e_ident[5] != 1
@@ -2279,7 +2390,13 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
                 int64_t imm = (int64_t)((((v >> 5) & 0x7FFFFu) << 2) | ((v >> 29) & 3u));
                 if (imm & 0x100000) imm -= 0x200000;
                 int64_t tv = (int64_t)(code[r].vaddr + k * 4) + imm - (int64_t)base_vaddr;
-                if (tv >= 0 && (size_t)tv < npages * PAGE && ((flags[(size_t)tv / PAGE] & TL_PAGE_W) || (go && !(flags[(size_t)tv / PAGE] & TL_PAGE_X)))) stub_bytes += 32;
+                if (tv >= 0 && (size_t)tv < npages * PAGE && ((flags[(size_t)tv / PAGE] & TL_PAGE_W) || (go && !(flags[(size_t)tv / PAGE] & TL_PAGE_X)) || mix[(size_t)tv / PAGE])) stub_bytes += 32;
+            }
+            else if ((v & 0xFF000000u) == 0x18000000u || (v & 0xFF000000u) == 0x58000000u) { /* ldr literal of copied data */
+                int64_t imm = (int64_t)((v >> 5) & 0x7FFFFu);
+                if (imm & 0x40000) imm -= 0x80000;
+                int64_t tv = (int64_t)(code[r].vaddr + k * 4) + imm * 4 - (int64_t)base_vaddr;
+                if (tv >= 0 && (size_t)tv < npages * PAGE && (mix[(size_t)tv / PAGE] || (flags[(size_t)tv / PAGE] & TL_PAGE_W))) stub_bytes += 32;
             }
             else if (((v & 31u) == 18 || ((v >> 5) & 31u) == 18 || ((v >> 10) & 31u) == 18 || ((v >> 16) & 31u) == 18) && a64_uses_gpr(v, 18, NULL))
                 stub_bytes += X18_STUB_BYTES;
