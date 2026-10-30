@@ -10,7 +10,10 @@ import Foundation
 enum JITLess {
     static let key = "husk.jitless"
 
-    static var enabled: Bool { UserDefaults.standard.bool(forKey: key) }
+    static var enabled: Bool {
+        get { UserDefaults.standard.bool(forKey: key) }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
 
     /// Prebuilt: the app's Frameworks, where the installer signs them with the app.
     static var bundledDirectory: String? { Bundle.main.privateFrameworksPath }

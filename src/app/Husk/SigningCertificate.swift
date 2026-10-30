@@ -40,6 +40,7 @@ final class SigningCertificate: ObservableObject {
 
     /// A .p12 file and its password (empty when it has none).
     func importP12(_ data: Data, password: String) {
+        let password = password.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let found = Self.inspect(data, password) else {
             lastError = "That certificate could not be opened. Check the password."
             return
@@ -70,13 +71,18 @@ final class SigningCertificate: ObservableObject {
     func handle(_ url: URL) -> Bool {
         guard url.scheme?.lowercased() == Self.callbackScheme, url.host?.lowercased() == Self.callbackHost else { return false }
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        func value(_ name: String) -> String? { items.first { $0.name.lowercased() == name }?.value }
+        func value(_ name: String) -> String? {
+            guard let raw = items.first(where: { $0.name.lowercased() == name })?.value else { return nil }
+            return raw.removingPercentEncoding ?? raw
+        }
         // a base64 '+' may arrive as a space
         guard let cert = value("cert")?.replacingOccurrences(of: " ", with: "+"), let data = Data(base64Encoded: cert) else {
             lastError = "The store's answer had no certificate in it."
             return true
         }
-        importP12(data, password: value("password") ?? "")
+        var password = value("password") ?? value("pass") ?? ""
+        if password == "$(PASSWORD)" { password = "" }
+        importP12(data, password: password)
         return true
     }
 

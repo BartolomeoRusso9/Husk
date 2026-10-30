@@ -717,6 +717,46 @@ static void macos_cleanup_temp_keychain(SecKeychainRef kc, const char *kc_path) 
 }
 #endif
 
+/* Empty-password .p12 files: some open with "" and some only with kCFNull. A real password is tried as given. */
+static OSStatus pkcs12_open(CFDataRef data, const char *password,
+#if !TARGET_OS_IPHONE
+                            SecKeychainRef kc,
+#endif
+                            CFArrayRef *items)
+{
+    *items = NULL;
+    CFStringRef pass = CFStringCreateWithCString(kCFAllocatorDefault, password ? password : "", kCFStringEncodingUTF8);
+    if (!pass) pass = (CFStringRef)CFRetain(CFSTR(""));
+    CFTypeRef tries[2];
+    int ntry = 0;
+    tries[ntry++] = pass;
+    if (!password || !password[0]) tries[ntry++] = kCFNull;
+
+    OSStatus st = errSecParam;
+    for (int i = 0; i < ntry; i++) {
+        const void *keys[2];
+        const void *values[2];
+        CFIndex n = 0;
+        keys[n] = kSecImportExportPassphrase; values[n] = tries[i]; n++;
+#if !TARGET_OS_IPHONE
+        if (kc) { keys[n] = kSecImportExportKeychain; values[n] = kc; n++; }
+#endif
+        CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, keys, values, n,
+                                                     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        CFArrayRef got = NULL;
+        st = SecPKCS12Import(data, options, &got);
+        CFRelease(options);
+        if (st == errSecSuccess && got && CFArrayGetCount(got) > 0) {
+            *items = got;
+            CFRelease(pass);
+            return errSecSuccess;
+        }
+        if (got) CFRelease(got);
+    }
+    CFRelease(pass);
+    return st;
+}
+
 bool husk_p12_info(const uint8_t *p12, size_t p12_len, const char *password,
                    char *team_id, size_t team_id_len,
                    double *not_after_epoch,
@@ -729,26 +769,15 @@ bool husk_p12_info(const uint8_t *p12, size_t p12_len, const char *password,
     }
 
     CFDataRef data = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, p12, (CFIndex)p12_len, kCFAllocatorNull);
-    CFStringRef pass = CFStringCreateWithCString(kCFAllocatorDefault, password ? password : "", kCFStringEncodingUTF8);
-
 #if !TARGET_OS_IPHONE
     char kc_path[256] = {0};
     SecKeychainRef kc = macos_create_temp_keychain(kc_path, sizeof(kc_path));
-    const void *keys[] = { kSecImportExportPassphrase, kSecImportExportKeychain };
-    const void *values[] = { pass, kc };
-    CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, keys, values, kc ? 2 : 1,
-                                                 &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-#else
-    const void *keys[] = { kSecImportExportPassphrase };
-    const void *values[] = { pass };
-    CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 1,
-                                                 &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-#endif
-
     CFArrayRef items = NULL;
-    OSStatus st = SecPKCS12Import(data, options, &items);
-    CFRelease(options);
-    CFRelease(pass);
+    OSStatus st = pkcs12_open(data, password, kc, &items);
+#else
+    CFArrayRef items = NULL;
+    OSStatus st = pkcs12_open(data, password, &items);
+#endif
     CFRelease(data);
 
     if (st != errSecSuccess || !items || CFArrayGetCount(items) == 0) {
@@ -834,24 +863,12 @@ bool husk_codesign_dylib(const char *path, const uint8_t *p12, size_t p12_len, c
 
     if (has_identity) {
         CFDataRef p12_data = CFDataCreateWithBytesNoCopy(kCFAllocatorDefault, p12, (CFIndex)p12_len, kCFAllocatorNull);
-        CFStringRef pass = CFStringCreateWithCString(kCFAllocatorDefault, password ? password : "", kCFStringEncodingUTF8);
-
 #if !TARGET_OS_IPHONE
         kc = macos_create_temp_keychain(kc_path, sizeof(kc_path));
-        const void *keys[] = { kSecImportExportPassphrase, kSecImportExportKeychain };
-        const void *values[] = { pass, kc };
-        CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, keys, values, kc ? 2 : 1,
-                                                     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        OSStatus st = pkcs12_open(p12_data, password, kc, &items);
 #else
-        const void *keys[] = { kSecImportExportPassphrase };
-        const void *values[] = { pass };
-        CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 1,
-                                                     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        OSStatus st = pkcs12_open(p12_data, password, &items);
 #endif
-
-        OSStatus st = SecPKCS12Import(p12_data, options, &items);
-        CFRelease(options);
-        CFRelease(pass);
         CFRelease(p12_data);
 
         if (st != errSecSuccess || !items || CFArrayGetCount(items) == 0) {

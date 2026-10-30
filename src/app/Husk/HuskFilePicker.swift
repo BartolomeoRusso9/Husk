@@ -48,13 +48,27 @@ enum HuskFilePicker {
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             HuskLog.log("ui", "file picker: \(urls.count) picked: " + urls.map(\.lastPathComponent).joined(separator: ", "))
             HuskFilePicker.live = nil
-            if !urls.isEmpty { onPick(urls) } else { onCancel?() }
+            let finish = { [onPick, onCancel] in
+                if !urls.isEmpty { onPick(urls) } else { onCancel?() }
+            }
+            Self.afterDismiss(controller, finish)
         }
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
             HuskLog.log("ui", "file picker: cancelled")
             HuskFilePicker.live = nil
             onCancel?()
+        }
+
+        /// The system dismisses the picker after this delegate returns. A SwiftUI sheet
+        /// presented in the same turn is attached to the picker and vanishes with it.
+        private static func afterDismiss(_ controller: UIViewController, _ work: @escaping () -> Void) {
+            let run = { DispatchQueue.main.async(execute: work) }
+            if let presenter = controller.presentingViewController {
+                presenter.dismiss(animated: true, completion: run)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: run)
+            }
         }
     }
 }

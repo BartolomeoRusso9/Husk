@@ -686,12 +686,6 @@ struct AndroidSystemPage: View {
                 NavigationLink { SavedMachineSettings() } label: { Label("Saved Machine", systemImage: "externaldrive") }
             }
 
-            Section {
-                Text("Android runs fully emulated, so it is slower than games on the translation layer. Use it for apps "
-                   + "Husk cannot run directly, like Termux or app stores.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Android")
