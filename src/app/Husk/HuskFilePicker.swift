@@ -49,7 +49,8 @@ enum HuskFilePicker {
             HuskLog.log("ui", "file picker: \(urls.count) picked: " + urls.map(\.lastPathComponent).joined(separator: ", "))
             HuskFilePicker.live = nil
             let finish = { [onPick, onCancel] in
-                if !urls.isEmpty { onPick(urls) } else { onCancel?() }
+                if urls.isEmpty { onCancel?(); return }
+                onPick(urls)
             }
             Self.afterDismiss(controller, finish)
         }
