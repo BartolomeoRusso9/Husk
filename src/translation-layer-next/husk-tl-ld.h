@@ -84,6 +84,9 @@ const char *tl_ld_symbol_at(const void *addr, const char **lib_name, const void 
 void *tl_ld_aot_writable(const void *addr, size_t bytes);
 /* True when `addr` is inside an imported AOT image (including its stub pages). mprotect there cannot change permissions. */
 bool tl_ld_aot_contains(const void *addr);
+/* True when any byte of [addr, addr+bytes) is a loaded library (AOT dylib or JIT image, either view).
+ * mmap(MAP_FIXED)/munmap/madvise must not treat that as anonymous heap. */
+bool tl_ld_covers(const void *addr, size_t bytes);
 /* If `addr` is a fetch from the writable copy of a function (relative C++ vtables
  * add a slot offset to a vtable that lives in the copy, which lands in the copy of
  * .text, which is not executable), the executable view of the same offset; otherwise NULL. */

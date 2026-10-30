@@ -906,6 +906,17 @@ static jobj *open_asset(const char *name)
         if (!e) continue;
         const uint8_t *d; size_t n; bool owned; char err[160];
         if (!tl_zip_data(z, e, (size_t)1 << 30, &d, &n, &owned, err, sizeof(err))) return NULL;
+        if (getenv("TL_NO_XMEM") && name && strstr(name, "boot.config")
+            && !memmem(d, n, "memorysetup-main-allocator-mimalloc-enabled=0", 45)) {
+            static const char extra[] = "\nmemorysetup-main-allocator-mimalloc-enabled=0\n";
+            uint8_t *b = malloc(n + sizeof(extra));
+            if (b) {
+                memcpy(b, d, n); memcpy(b + n, extra, sizeof(extra) - 1);
+                if (owned) free((void *)d);
+                d = b; n += sizeof(extra) - 1; owned = true;
+                tl_log_line("unity: boot.config: Mimalloc disabled (JIT-less)");
+            }
+        }
         jobj *s = make("java/io/ByteArrayInputStream");
         stream *st = calloc(1, sizeof(*st));
         st->data = d; st->len = n; if (owned) st->owned = (uint8_t *)d;

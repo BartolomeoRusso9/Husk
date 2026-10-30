@@ -133,6 +133,13 @@ static void on_crash(int sig, siginfo_t *info, void *uctx)
     }
     for (int i = 0; i < 29; i += 4)
         fprintf(stderr, "  x%d=%#llx x%d=%#llx x%d=%#llx x%d=%#llx\n", i, ss->__x[i], i + 1, ss->__x[i + 1], i + 2, i + 2 < 29 ? ss->__x[i + 2] : 0, i + 3, i + 3 < 29 ? ss->__x[i + 3] : 0);
+    for (int i = 0; i < 29; i++) {
+        char s[96];
+        if (!safe_read(ss->__x[i], s, sizeof(s))) continue;
+        int n = 0;
+        while (n < 80 && s[n] >= 32 && s[n] < 127) n++;
+        if (n >= 4) { s[n] = 0; fprintf(stderr, "  x%d str \"%s\"\n", i, s); }
+    }
     fprintf(stderr, "  sp=%#llx fp=%#llx\n", ss->__sp, ss->__fp);
     { char gl[2048]; tl_egl_recent_calls(gl, sizeof(gl), 40); if (gl[0]) fprintf(stderr, "  last GL calls: %s\n", gl); }
     { static char h[1024 * 48]; tl_egl_gl_histogram(h, sizeof(h)); if (h[0]) fprintf(stderr, "  GL calls by function: %s\n", h); }

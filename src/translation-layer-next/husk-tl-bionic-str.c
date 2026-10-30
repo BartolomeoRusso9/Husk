@@ -29,6 +29,9 @@
 #include <xlocale.h>
 
 #include "husk-tl-va.h"
+#include "husk-tl-ld.h"
+
+bool tl_xmem_contains(const void *p);
 
 const char *tl_path_resolve(const char *path, char *buf, size_t n);   /* husk-tl-bionic-io.c */
 int tl_synth_open(const char *path);
@@ -513,6 +516,31 @@ static void *b_memalign(size_t align, size_t size)
     return posix_memalign(&p, align, size) ? NULL : p;
 }
 
+/* Darwin's malloc aborts on free of a pointer that is not from malloc. AOT mixed pages
+ * can hand Unity a pointer into the signed image (a global, or the unrelocated view of a
+ * heap field); that is not a heap block. */
+static bool heap_is_image(const void *p)
+{
+    return p && (tl_ld_covers(p, 1) || tl_xmem_contains(p));
+}
+static void b_free(void *p)
+{
+    if (!p) return;
+    if (heap_is_image(p)) {
+        static int n; if (n++ < 12) tl_log_line("bionic: free(%p) of a loaded library: ignored", p);
+        return;
+    }
+    free(p);
+}
+static void *b_realloc(void *p, size_t n)
+{
+    if (heap_is_image(p)) {
+        static int k; if (k++ < 8) tl_log_line("bionic: realloc(%p, %zu) of a loaded library: a fresh block", p, n);
+        return malloc(n);
+    }
+    return realloc(p, n);
+}
+
 /* The floating-point environment: bionic's fenv_t is two words of its own layout, and nothing here turns on exceptions or rounding, so these report success. */
 static int b_fe_env(void *env) { if (env) memset(env, 0, 8); return 0; }
 static int b_fe_ok(void) { return 0; }
@@ -712,7 +740,7 @@ const tl_bionic_entry tl_tab_str[] = {
     TL_WRAP("wcstold", b_wcstold),
     TL_WRAP("swprintf", tl_va_swprintf),
     /* stdlib.h */
-    TL_DIRECT(malloc), TL_DIRECT(calloc), TL_DIRECT(realloc), TL_DIRECT(free), TL_DIRECT(posix_memalign),
+    TL_DIRECT(malloc), TL_DIRECT(calloc), TL_WRAP("realloc", b_realloc), TL_WRAP("free", b_free), TL_DIRECT(posix_memalign),
     TL_WRAP("memalign", b_memalign),
     TL_DIRECT(atoi), TL_DIRECT(atol), TL_DIRECT(atoll), TL_DIRECT(bsearch), TL_DIRECT(qsort), TL_DIRECT(div), TL_DIRECT(lldiv),
     TL_DIRECT(rand), TL_DIRECT(srand), TL_DIRECT(srand48), TL_DIRECT(lrand48),

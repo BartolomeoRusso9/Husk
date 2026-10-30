@@ -613,6 +613,20 @@ bool tl_ld_aot_contains(const void *addr)
     return false;
 }
 
+bool tl_ld_covers(const void *addr, size_t bytes)
+{
+    if (!addr || bytes == 0) return false;
+    const uint8_t *lo = addr, *hi = lo + bytes;
+    for (int i = 0; i < G.nlibs; i++) {
+        tl_lib *L = G.libs[i];
+        size_t span = (L->npages + L->nstub + 2) * PAGE;
+        if (L->rx && lo < L->rx + span && hi > L->rx) return true;
+        if (L->rw && L->rw != L->rx && lo < L->rw + span && hi > L->rw) return true;
+        if (L->dup && lo < L->dup + L->npages * PAGE && hi > L->dup) return true;
+    }
+    return false;
+}
+
 const char *tl_ld_lib_name(const tl_lib *lib) { return lib ? lib->name : NULL; }
 
 const char *tl_ld_symbol_at(const void *addr, const char **lib_name, const void **sym_addr)
