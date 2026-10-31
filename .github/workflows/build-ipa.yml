@@ -1,0 +1,77 @@
+name: Build Husk IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "IPA format"
+        required: true
+        type: choice
+        options:
+          - ipa
+          - tipa-trollstore
+        default: ipa
+
+permissions:
+  contents: read
+
+concurrency:
+  group: husk-ipa-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # IMPORTANT: run this workflow on fix/jni-class-initialization.
+    runs-on: macos-15
+    timeout-minutes: 360
+    steps:
+      - name: Checkout fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/jni-class-initialization
+          fetch-depth: 0
+
+      - name: Verify JNI fix commit is present
+        run: |
+          git log -1 --oneline
+          git merge-base --is-ancestor 46991babac0fc07ea752b037c31d998453afea9c HEAD
+          grep -q 'ensure_class_initialized' src/translation-layer-next/husk-tl-jni.c
+          grep -q 'hook_ensure_init' src/translation-layer-next/husk-tl-dvm.c
+
+      - name: Install build tools
+        run: |
+          brew update
+          brew install meson ninja pkg-config autoconf automake libtool gettext xcodegen
+
+      - name: Fetch third-party sources
+        run: ./scripts/fetch_sources.sh
+
+      - name: Build iOS native dependencies
+        run: ./scripts/build_ios.sh
+
+      - name: Fetch Phase 0 guest files
+        run: ./scripts/fetch_phase0_guest.sh
+
+      - name: Generate Xcode project
+        run: |
+          cd src/app
+          xcodegen generate
+
+      - name: Package IPA
+        shell: bash
+        run: |
+          if [ "${{ inputs.package }}" = "tipa-trollstore" ]; then
+            ./scripts/package_ipa.sh --trollstore "$GITHUB_WORKSPACE/Husk.tipa"
+          else
+            ./scripts/package_ipa.sh "$GITHUB_WORKSPACE/Husk.ipa"
+          fi
+
+      - name: Upload installable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Husk-${{ inputs.package }}-${{ github.sha }}
+          path: |
+            Husk.ipa
+            Husk.tipa
+          if-no-files-found: error
+          retention-days: 7
