@@ -2026,6 +2026,11 @@ static bool hook_attach(tl_jclass *jc)
     if (ok && !strcmp(jc->name, "java/lang/String")) g_string_class = jc;
     return ok;
 }
+static bool hook_ensure_init(tl_jclass *jc)
+{
+    dvm_class *c = dvm_class_of(jc);
+    return !c || dvm_ensure_init(c);
+}
 static void *hook_find_method(tl_jclass *jc, const char *name, const char *sig, bool is_static)
 {
     dvm_class *c = dvm_class_of(jc);
@@ -2055,7 +2060,7 @@ static bool hook_find_field(tl_jclass *jc, const char *name, const char *sig, bo
 }
 static uint32_t hook_slots(tl_jclass *jc) { dvm_class *c = dvm_class_of(jc); return c ? c->nslots : 0; }
 
-static const tl_dvm_hooks k_hooks = { hook_attach, hook_find_method, hook_invoke, hook_find_field, hook_slots };
+static const tl_dvm_hooks k_hooks = { hook_attach, hook_ensure_init, hook_find_method, hook_invoke, hook_find_field, hook_slots };
 
 static bool g_running;
 
