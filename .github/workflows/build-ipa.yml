@@ -49,6 +49,26 @@ jobs:
       - name: Build iOS native dependencies
         run: ./scripts/build_ios.sh
 
+      - name: Show QEMU build failure details
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f build/logs/qemu.log ]; then
+            echo "===== Last 250 lines of build/logs/qemu.log ====="
+            tail -n 250 build/logs/qemu.log
+          else
+            echo "build/logs/qemu.log was not created"
+          fi
+
+      - name: Upload QEMU build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Husk-build-logs-${{ github.sha }}
+          path: build/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Fetch Phase 0 guest files
         run: ./scripts/fetch_phase0_guest.sh
 
