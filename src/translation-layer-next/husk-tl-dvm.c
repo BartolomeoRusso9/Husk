@@ -1113,6 +1113,8 @@ static void *find_jni(dvm_method *m)
             fn = tl_ld_sym(NULL, sym);
         }
     }
+    if (!fn && !m->jni_looked)
+        tl_log_line("dvm: no native found for %s.%s%s (registrations so far: %u)", m->cls->name, m->name, m->sig, gen);
     m->jni = fn;
     m->jni_looked = true;
     return fn;

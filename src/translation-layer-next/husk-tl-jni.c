@@ -626,6 +626,7 @@ static jo jni_FindClass(void *env, const char *name)
         /* the Java runtime is up: a class exists when some DEX on its class paths defines it */
         tl_jclass *c = tl_jni_class(name);
         if (c->dvm || framework) return c->mirror;
+        tl_log_line("jni: FindClass(%s) -> NoClassDefFoundError", name);
         char msg[200]; snprintf(msg, sizeof(msg), "%s", name);
         tl_jni_throw("java/lang/NoClassDefFoundError", msg);
         return NULL;
@@ -1085,7 +1086,10 @@ static unsigned g_natives_generation;
 static int32_t jni_RegisterNatives(void *env, jo cls, const native_method *m, int32_t n)
 {
     (void)env;
-    if (!cls || cls->kind != TL_K_CLASS) return -1;
+    if (!cls || cls->kind != TL_K_CLASS) {
+        tl_log_line("jni: RegisterNatives failed: %s (%d methods)", cls ? "not a class object" : "null class", (int)n);
+        return -1;
+    }
     tl_jclass *given = cls->klass.jc;
     bool tl_dvm_declares(tl_jclass *jc, const char *name, const char *sig);
     pthread_mutex_lock(&g_lock);
@@ -1093,8 +1097,12 @@ static int32_t jni_RegisterNatives(void *env, jo cls, const native_method *m, in
         /* the class that declares the method, the given one or a superclass (ART's FindClassMethod): Reanimated registers
            NativeProxyCommon's natives through its subclass NativeProxy */
         tl_jclass *c = given;
-        if (!tl_dvm_declares(c, m[i].name, m[i].sig))
-            for (tl_jclass *k = given->super; k; k = k->super) if (tl_dvm_declares(k, m[i].name, m[i].sig)) { c = k; break; }
+        bool declared = tl_dvm_declares(c, m[i].name, m[i].sig);
+        for (tl_jclass *k = given->super; !declared && k; k = k->super)
+            if (tl_dvm_declares(k, m[i].name, m[i].sig)) { c = k; declared = true; }
+        if (!declared)
+            tl_log_line("jni: RegisterNatives %s.%s%s: declared by no class in the chain, bound to %s anyway",
+                        given->name, m[i].name, m[i].sig, c->name);
         c->natives = realloc(c->natives, (size_t)(c->nnatives + 1) * sizeof(*c->natives));
         c->natives[c->nnatives].name = strdup(m[i].name);
         c->natives[c->nnatives].sig = strdup(m[i].sig);
