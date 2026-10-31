@@ -691,7 +691,18 @@ static uint8_t jni_IsSameObject(void *env, jo a, jo b) { (void)env; return a == 
 static jo jni_NewLocalRef(void *env, jo o) { (void)env; return tl_jni_ref(o); }
 static int32_t jni_EnsureLocalCapacity(void *env, int32_t n) { (void)env; (void)n; return 0; }
 static uint32_t jni_GetObjectRefType(void *env, jo o) { (void)env; (void)o; return 1; }
-static jo jni_AllocObject(void *env, jo cls) { (void)env; return (cls && cls->kind == TL_K_CLASS) ? tl_jni_new_object(cls->klass.jc) : NULL; }
+/* ART ensures the class is initialised before JNI object-creation and method-lookup operations. */
+static bool ensure_class_initialized(tl_jclass *jc)
+{
+    return !tl_dvm || !jc || tl_dvm->ensure_init(jc);
+}
+static jo jni_AllocObject(void *env, jo cls)
+{
+    (void)env;
+    if (!cls || cls->kind != TL_K_CLASS) return NULL;
+    if (!ensure_class_initialized(cls->klass.jc)) return NULL;
+    return tl_jni_new_object(cls->klass.jc);
+}
 static jo jni_GetObjectClass(void *env, jo o)
 {
     (void)env;
@@ -707,6 +718,7 @@ static void *jni_GetMethodID_impl(jo cls, const char *name, const char *sig, boo
         tl_jni_throw("java/lang/NullPointerException", "class is null");
         return NULL;
     }
+    if (!ensure_class_initialized(cls->klass.jc)) return NULL;
     tl_jmeth *m = lookup_method(cls->klass.jc, name, sig, is_static);
     TRACE("jni: Get%sMethodID(%s, %s%s) -> %s", is_static ? "Static" : "", cls->klass.jc->name, name, sig,
           m->fn ? "implemented" : m->exists ? "exists, not implemented" : "NOT FOUND");
@@ -763,6 +775,7 @@ extern void tl_va_jni_CallVoidMethod(void); extern void tl_va_jni_CallNonvirtual
 static jo new_object(jo cls, void *mid, int how, const jvalue *a, tl_va_list *ap)
 {
     if (!cls || cls->kind != TL_K_CLASS) { tl_jni_throw("java/lang/NullPointerException", "class is null"); return NULL; }
+    if (!ensure_class_initialized(cls->klass.jc)) return NULL;
     jobj *o = tl_jni_new_object(cls->klass.jc);
     tl_jmeth *m = mid_ok(mid);
     if (m) {
