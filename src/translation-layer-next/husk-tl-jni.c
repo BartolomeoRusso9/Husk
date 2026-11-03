@@ -1104,6 +1104,8 @@ static int32_t jni_RegisterNatives(void *env, jo cls, const native_method *m, in
         return -1;
     }
     tl_jclass *given = cls->klass.jc;
+    tl_log_line("jni: RegisterNatives %s: %d method(s), first %s%s", given->name, (int)n,
+                n > 0 ? m[0].name : "-", n > 0 ? m[0].sig : "");
     bool tl_dvm_declares(tl_jclass *jc, const char *name, const char *sig);
     pthread_mutex_lock(&g_lock);
     for (int32_t i = 0; i < n; i++) {
