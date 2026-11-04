@@ -1,5 +1,7 @@
 #!/bin/bash
-# Stage build/java-runtime and build/android-system without the Lineage system image.
+# Stage build/java-runtime, build/android-system and the PS4 layer
+# (build/ios-arm64/lib/libhuskps4.dylib) without the Lineage system image or
+# the PS4 core's private trees.
 #
 # build_java_runtime.sh and build_android_system.sh copy those trees out of an
 # Android system image that is not in this repository, and without them Xcode
@@ -48,7 +50,7 @@ fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-unzip -q "$IPA" 'Payload/*/java-runtime/*' 'Payload/*/android-system/*' -d "$TMP"
+unzip -q "$IPA" 'Payload/*/java-runtime/*' 'Payload/*/android-system/*' 'Payload/*/Frameworks/libhuskps4.dylib' -d "$TMP"
 APP="$(ls -d "$TMP"/Payload/*.app)"
 [ -f "$APP/java-runtime/com.android.art/javalib/core-oj.jar" ] || { echo "error: $IPA has no java-runtime" >&2; exit 1; }
 [ -d "$APP/android-system/cacerts" ] || { echo "error: $IPA has no android-system" >&2; exit 1; }
@@ -60,6 +62,22 @@ rsync -a --delete "$APP/android-system/" "$SYS/"
 echo "==> java-runtime libraries from $RELEASE"
 mkdir -p "$JRT"
 rsync -a --delete --exclude 'husk-framework*.dex' --exclude 'aosp/' "$APP/java-runtime/" "$JRT/"
+
+# The PS4 layer: build_ps4_ios.sh needs Bachata-S4 and husk-fex, which are not
+# public. Husk talks to it only through husk_console_module_v1
+# (husk-console-abi.h), so the release's dylib works as long as that ABI is the
+# same. A locally built one is never overwritten.
+PS4="$HUSK_ROOT/build/ios-arm64/lib/libhuskps4.dylib"
+if [ -f "$PS4" ] && [ ! -f "$PS4.from-release" ]; then
+    echo "==> libhuskps4.dylib: keeping the locally built one"
+elif [ -f "$APP/Frameworks/libhuskps4.dylib" ]; then
+    echo "==> libhuskps4.dylib (PS4 layer) from $RELEASE"
+    mkdir -p "$(dirname "$PS4")"
+    cp "$APP/Frameworks/libhuskps4.dylib" "$PS4"
+    echo "$RELEASE" > "$PS4.from-release"
+else
+    echo "==> $IPA has no libhuskps4.dylib; the app is packaged without the PS4 layer" >&2
+fi
 
 echo "==> husk-framework.dex from src/java-framework (JDK: $JDK)"
 HUSK_JDK="$JDK" HUSK_D8="$D8" "$HUSK_ROOT/src/java-framework/build.sh" "$JRT/husk-framework.dex"
