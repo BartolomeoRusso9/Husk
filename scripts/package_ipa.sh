@@ -56,7 +56,35 @@ fi
 # is plainly right there on disk.
 if command -v xcodegen >/dev/null 2>&1; then
     echo "==> regenerating the project from project.yml"
-    (cd "$HUSK_ROOT/src/app" && xcodegen generate --quiet)
+    # The PS4 layer (libhuskps4.dylib) is built by build_ps4_ios.sh from two trees
+    # that are not in this repository. It is embedded, never linked, and the app
+    # already says "This copy of Husk doesn't have the PS4 layer" when it is
+    # absent -- so without it, build the app without embedding it instead of
+    # failing on a missing file.
+    if [ -f "$HUSK_ROOT/build/ios-arm64/lib/libhuskps4.dylib" ]; then
+        (cd "$HUSK_ROOT/src/app" && xcodegen generate --quiet)
+    else
+        echo "==> libhuskps4.dylib not built; packaging without the PS4 layer" >&2
+        NOPS4="$HUSK_ROOT/src/app/.project-no-ps4.yml"
+        python3 - "$HUSK_ROOT/src/app/project.yml" "$NOPS4" <<'PY'
+import sys
+lines = open(sys.argv[1]).read().split("\n")
+out, skip = [], None
+for line in lines:
+    indent = len(line) - len(line.lstrip())
+    if skip is not None:
+        if line.strip() and indent > skip:
+            continue
+        skip = None
+    if "libhuskps4.dylib" in line and line.lstrip().startswith("- framework:"):
+        skip = indent
+        continue
+    out.append(line)
+open(sys.argv[2], "w").write("\n".join(out))
+PY
+        (cd "$HUSK_ROOT/src/app" && xcodegen generate --quiet --spec "$NOPS4")
+        rm -f "$NOPS4"
+    fi
 else
     echo "==> xcodegen not installed; using the checked-in project as-is" >&2
 fi
@@ -138,6 +166,11 @@ fi
 # check that covers one of two required libraries is a check that reports
 # success on a bundle that cannot launch.
 for lib in libqemu-aarch64-softmmu.dylib libANGLE-shared.dylib libhuskps4.dylib; do
+    # The PS4 layer is optional (see the xcodegen step): required only when built.
+    if [ "$lib" = libhuskps4.dylib ] && [ ! -f "$HUSK_ROOT/build/ios-arm64/lib/$lib" ]; then
+        echo "  skip     PS4 layer (libhuskps4.dylib not built)"
+        continue
+    fi
     if [ ! -f "$APP/Frameworks/$lib" ]; then
         echo "  MISSING  Frameworks/$lib" >&2
         rc=1

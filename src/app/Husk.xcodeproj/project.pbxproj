@@ -57,7 +57,6 @@
 		2AF70AB52147BB095A60AA50 /* husk-tl-codesign.c in Sources */ = {isa = PBXBuildFile; fileRef = 26587E5CDEE5CA1A2C8A2838 /* husk-tl-codesign.c */; };
 		2B545A13904F3C3CA391F5E5 /* FAQTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BF5756DFAA31BA30063664B /* FAQTab.swift */; };
 		2BB97B7AE3D1994ABB4A67A0 /* MassTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2470C9D4EBE84F890D35A354 /* MassTest.swift */; };
-		2F3AAEAEF4FF7E662A1A0413 /* libhuskps4.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = E314663FF7E2396DE0A0D364 /* libhuskps4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		2FA53354B1957E8B362148FF /* husk-tl-aosp.c in Sources */ = {isa = PBXBuildFile; fileRef = BCD00A6A38B9033C0398D419 /* husk-tl-aosp.c */; };
 		305642B7B63D6DC85E36D091 /* husk-tl-nativeactivity.c in Sources */ = {isa = PBXBuildFile; fileRef = 3B72237F810FCE0EE433FA3D /* husk-tl-nativeactivity.c */; };
 		308AC941024A28652B15B3F4 /* husk-tl-res.c in Sources */ = {isa = PBXBuildFile; fileRef = 7FD8DC66414547110F0E0B0E /* husk-tl-res.c */; };
@@ -248,7 +247,6 @@
 				8573CC8F200AA844B23AD4F9 /* libFilePickerFix.dylib in Embed Frameworks */,
 				0B197878C829D66E77FD7E3F /* libANGLE-shared.dylib in Embed Frameworks */,
 				BC0702C5451118E673E70F6F /* MoltenVK.xcframework in Embed Frameworks */,
-				2F3AAEAEF4FF7E662A1A0413 /* libhuskps4.dylib in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -494,7 +492,6 @@
 		DC6A345F190285ADF810B168 /* husk-tl-dvm-sqlite.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-dvm-sqlite.c"; sourceTree = "<group>"; };
 		DD3AA162B82B50B7D4B5F5C4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E29734A13FFD848BA212FAED /* husk-tl-unity.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "husk-tl-unity.h"; sourceTree = "<group>"; };
-		E314663FF7E2396DE0A0D364 /* libhuskps4.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libhuskps4.dylib; path = "../../build/ios-arm64/lib/libhuskps4.dylib"; sourceTree = "<group>"; };
 		E37298010F80517A3057579E /* BundleUnpacker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundleUnpacker.swift; sourceTree = "<group>"; };
 		E3A701AA76E485A6CE15F106 /* icon-cleardark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-cleardark.png"; sourceTree = "<group>"; };
 		E4D1C81CB49D39A7D865A0DA /* husk-tl-probe.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "husk-tl-probe.c"; sourceTree = "<group>"; };
@@ -671,7 +668,6 @@
 			children = (
 				3B1406C4A7D0F7E50BCB365B /* libANGLE-shared.dylib */,
 				F44A2196AA5F6271BF893660 /* libFilePickerFix.dylib */,
-				E314663FF7E2396DE0A0D364 /* libhuskps4.dylib */,
 				1B29247002CE43A3B9DEC633 /* libqemu-aarch64-softmmu.dylib */,
 				9713186CDCF6F1188BB4ABE1 /* MoltenVK.xcframework */,
 				BBCF8D04E0CEDAB3542C5271 /* StikJIT.xcframework */,
