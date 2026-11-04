@@ -32,6 +32,20 @@ jobs:
           brew install meson ninja pkg-config autoconf automake libtool gettext xcodegen
           rustup target add aarch64-apple-ios
 
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # java-runtime (libcore, ICU, conscrypt...) and android-system (CA certs,
+      # fonts) come from an Android system image that is not in the repo; the
+      # script takes them from the official release IPA and compiles
+      # husk-framework.dex from this checkout. Without them the IPA installs but
+      # Java apps cannot start and HTTPS fails.
+      - name: Stage Java runtime and Android system files
+        run: ./scripts/stage_release_runtime.sh
+
       # ci_build.sh runs every stage in the order the project needs:
       # deps -> ANGLE -> epoxy/virglrenderer -> QEMU -> integrate_husk ->
       # QEMU rebuild -> guest files -> MoltenVK -> rppairing -> IPA + TIPA.
@@ -39,6 +53,13 @@ jobs:
       # cannot be built before the GPU stack.
       - name: Build everything
         run: ./scripts/ci_build.sh "$GITHUB_WORKSPACE/Husk.ipa"
+
+      - name: Verify the IPA carries the Java runtime
+        run: |
+          unzip -Z1 Husk.ipa > ipa-files.txt
+          grep -q 'java-runtime/husk-framework.dex$' ipa-files.txt
+          grep -q 'java-runtime/com.android.art/javalib/core-oj.jar$' ipa-files.txt
+          grep -q 'android-system/cacerts/' ipa-files.txt
 
       - name: Show build failure details
         if: failure()
