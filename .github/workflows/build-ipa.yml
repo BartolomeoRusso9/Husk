@@ -2,15 +2,6 @@ name: Build Husk IPA
 
 on:
   workflow_dispatch:
-    inputs:
-      package:
-        description: "IPA format"
-        required: true
-        type: choice
-        options:
-          - ipa
-          - tipa-trollstore
-        default: ipa
 
 permissions:
   contents: read
@@ -21,20 +12,17 @@ concurrency:
 
 jobs:
   build:
-    # IMPORTANT: run this workflow on fix/jni-class-initialization.
     runs-on: macos-15
     timeout-minutes: 360
     steps:
-      - name: Checkout fix branch
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: fix/jni-class-initialization
           fetch-depth: 0
 
-      - name: Verify JNI fix commit is present
+      - name: Verify JNI fix is present
         run: |
           git log -1 --oneline
-          git merge-base --is-ancestor 46991babac0fc07ea752b037c31d998453afea9c HEAD
           grep -q 'ensure_class_initialized' src/translation-layer-next/husk-tl-jni.c
           grep -q 'hook_ensure_init' src/translation-layer-next/husk-tl-dvm.c
 
@@ -42,34 +30,39 @@ jobs:
         run: |
           brew update
           brew install meson ninja pkg-config autoconf automake libtool gettext xcodegen
+          rustup target add aarch64-apple-ios
 
-      - name: Fetch third-party sources
-        run: ./scripts/fetch_sources.sh
+      # ci_build.sh runs every stage in the order the project needs:
+      # deps -> ANGLE -> epoxy/virglrenderer -> QEMU -> integrate_husk ->
+      # QEMU rebuild -> guest files -> MoltenVK -> rppairing -> IPA + TIPA.
+      # QEMU is configured with --enable-opengl --enable-virglrenderer, so it
+      # cannot be built before the GPU stack.
+      - name: Build everything
+        run: ./scripts/ci_build.sh "$GITHUB_WORKSPACE/Husk.ipa"
 
-      - name: Build iOS native dependencies
-        run: ./scripts/build_ios.sh
-
-      - name: Fetch Phase 0 guest files
-        run: ./scripts/fetch_phase0_guest.sh
-
-      - name: Generate Xcode project
-        run: |
-          cd src/app
-          xcodegen generate
-
-      - name: Package IPA
+      - name: Show build failure details
+        if: failure()
         shell: bash
         run: |
-          if [ "${{ inputs.package }}" = "tipa-trollstore" ]; then
-            ./scripts/package_ipa.sh --trollstore "$GITHUB_WORKSPACE/Husk.tipa"
-          else
-            ./scripts/package_ipa.sh "$GITHUB_WORKSPACE/Husk.ipa"
-          fi
+          for f in build/logs/*.log; do
+            [ -f "$f" ] || continue
+            echo "===== Last 150 lines of $f ====="
+            tail -n 150 "$f"
+          done
 
-      - name: Upload installable package
+      - name: Upload build logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Husk-${{ inputs.package }}-${{ github.sha }}
+          name: Husk-build-logs-${{ github.sha }}
+          path: build/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload installable packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: Husk-${{ github.sha }}
           path: |
             Husk.ipa
             Husk.tipa
