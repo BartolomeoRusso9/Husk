@@ -43,7 +43,7 @@ jobs:
       # script takes them from the official release IPA and compiles
       # husk-framework.dex from this checkout. Without them the IPA installs but
       # Java apps cannot start and HTTPS fails.
-      - name: Stage Java runtime and Android system files
+      - name: Stage Java runtime, Android system files and PS4 layer
         run: ./scripts/stage_release_runtime.sh
 
       # ci_build.sh runs every stage in the order the project needs:
@@ -60,6 +60,7 @@ jobs:
           grep -q 'java-runtime/husk-framework.dex$' ipa-files.txt
           grep -q 'java-runtime/com.android.art/javalib/core-oj.jar$' ipa-files.txt
           grep -q 'android-system/cacerts/' ipa-files.txt
+          grep -q 'Frameworks/libhuskps4.dylib$' ipa-files.txt
 
       - name: Show build failure details
         if: failure()
