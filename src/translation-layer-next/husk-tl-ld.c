@@ -11,6 +11,8 @@
 #include <mach/mach.h>
 #include <mach/vm_map.h>
 #include <pthread.h>
+#include <signal.h>
+#include <sys/ucontext.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -20,6 +22,7 @@
 
 #include "husk-tl-internal.h"
 #include "husk-tl-a64.h"
+#include "husk-tl-arm32.h"
 #include "husk-tl-xmem.h"
 #include "husk-tl-codewrite.h"
 
@@ -115,6 +118,7 @@ struct tl_lib {
     size_t n_reloc_code;           /* imported: relocations that name a code page, which a dylib maps read-only, so were not applied */
     bool system;                   /* from the runtime's own folders (an APEX's lib64), not the app: what it needs comes from there too */
     bool aot;                      /* imported from a dylib made ahead of time (tl_ld_aot_build): its code is already rewritten and read-only */
+    bool arm32;                    /* ELF32 ARM, translated to AArch64 (husk-tl-arm32.c) */
 };
 static inline bool data_page(const tl_lib *L, size_t page);
 static bool in_code(const tl_lib *L, uint64_t vaddr);
@@ -169,6 +173,11 @@ static struct {
 /* Serialises load/init. Recursive, as a linker's lock has to be: a library's constructor may dlopen another (Geode's constructors
  * dlopen the game they hook), on the thread that is already inside the loader. */
 static pthread_mutex_t g_big = PTHREAD_RECURSIVE_MUTEX_INITIALIZER;
+/* The table is added to under g_big and read without it (tl_ld_covers, from any thread): a library is published after its
+ * slot is written (release), and readers take the count with acquire, so a reader never sees a count whose slot is not yet
+ * written (Picsart: a thread in tl_ld_covers read a NULL library while another loaded libpilibs.so). */
+static inline int nlibs_acq(void) { return __atomic_load_n(&G.nlibs, __ATOMIC_ACQUIRE); }
+static inline void publish_lib(tl_lib *L) { int n = G.nlibs; G.libs[n] = L; __atomic_store_n(&G.nlibs, n + 1, __ATOMIC_RELEASE); }
 
 void tl_ld_set_verbosity(int v) { G.verbosity = v; }
 void tl_ld_set_environment(char **argv, char **envp) { G.argv = argv; G.envp = envp; }
@@ -223,60 +232,105 @@ bool tl_ld_add_apk(const char *path)
     return true;
 }
 
+void tl_ld_reset_session(void)
+{
+    pthread_mutex_lock(&g_big);
+    for (int i = 0; i < G.napks; i++) tl_zip_close(&G.apks[i]);
+    G.napks = 0;
+    g_nsplits = 0;
+    memset(g_apk_paths, 0, sizeof(g_apk_paths));
+    memset(g_splits, 0, sizeof(g_splits));
+    int keep = 0;
+    for (int i = 0; i < nlibs_acq(); i++) {
+        tl_lib *L = G.libs[i];
+        if (L->system) G.libs[keep++] = L;
+        else { L->name[0] = 0; L->soname[0] = 0; }
+    }
+    G.nlibs = keep;
+    pthread_mutex_unlock(&g_big);
+    tl_a32_reset();
+    tl_log_line("ld: the app's libraries are forgotten; another APK can load");
+}
+
 const tl_zip *tl_ld_apk_at(int i) { return (i >= 0 && i < G.napks) ? &G.apks[i] : NULL; }
 
-/* Every arm64 library the APKs carry, by file name and size: a game that links SDL into its own library names no SDL library to look for. */
+static const char *const k_lib_dirs[] = { "lib/arm64-v8a/", "lib/armeabi-v7a/", "lib/armeabi/" };
+
+static bool lib_zip_name(const char *nm, size_t l, const char *dir, const char **leaf)
+{
+    size_t d = strlen(dir);
+    if (l < d + 3 || strncmp(nm, dir, d) || strcmp(nm + l - 3, ".so") || strchr(nm + d, '/')) return false;
+    if (leaf) *leaf = nm + d;
+    return true;
+}
+
+/* Every ARM library the APKs carry, by file name and size. arm64 first, then 32-bit names the APK did not already list. */
 int tl_ld_apk_libs(void (*cb)(const char *name, uint64_t size, void *user), void *user)
 {
     int n = 0;
-    for (int i = 0; i < G.napks; i++)
-        for (size_t k = 0; k < G.apks[i].count; k++) {
-            const char *nm = G.apks[i].entries[k].name;
-            size_t l = strlen(nm);
-            if (strncmp(nm, "lib/arm64-v8a/", 14) || l < 18 || strcmp(nm + l - 3, ".so") || strchr(nm + 14, '/')) continue;
-            cb(nm + 14, G.apks[i].entries[k].usize, user); n++;
-        }
+    char seen[256][64]; int nseen = 0;
+    for (int d = 0; d < 3; d++)
+        for (int i = 0; i < G.napks; i++)
+            for (size_t k = 0; k < G.apks[i].count; k++) {
+                const char *nm = G.apks[i].entries[k].name, *leaf;
+                size_t l = strlen(nm);
+                if (!lib_zip_name(nm, l, k_lib_dirs[d], &leaf)) continue;
+                int dup = 0;
+                for (int s = 0; s < nseen; s++) if (!strcmp(seen[s], leaf)) { dup = 1; break; }
+                if (dup) continue;
+                if (nseen < 256) snprintf(seen[nseen++], sizeof(seen[0]), "%s", leaf);
+                cb(leaf, G.apks[i].entries[k].usize, user); n++;
+            }
     return n;
 }
 
-/* The APK (base or split) whose lib/arm64-v8a/ carries a library, or NULL. */
+/* The APK (base or split) whose lib/<abi>/ carries a library, or NULL. */
 const char *tl_ld_lib_apk(const char *name)
 {
     char entry[200];
-    snprintf(entry, sizeof(entry), "lib/arm64-v8a/%s", name);
-    for (int i = 0; i < G.napks; i++) if (tl_zip_find(&G.apks[i], entry)) return g_apk_paths[i];
+    for (int d = 0; d < 3; d++) {
+        snprintf(entry, sizeof(entry), "%s%s", k_lib_dirs[d], name);
+        for (int i = 0; i < G.napks; i++) if (tl_zip_find(&G.apks[i], entry)) return g_apk_paths[i];
+    }
     return NULL;
 }
 
 bool tl_ld_has_lib(const char *name)
 {
     char path[160];
-    snprintf(path, sizeof(path), "lib/arm64-v8a/%s", name);
-    for (int i = 0; i < G.napks; i++) if (tl_zip_find(&G.apks[i], path)) return true;
+    for (int d = 0; d < 3; d++) {
+        snprintf(path, sizeof(path), "%s%s", k_lib_dirs[d], name);
+        for (int i = 0; i < G.napks; i++) if (tl_zip_find(&G.apks[i], path)) return true;
+    }
     return false;
 }
+
+bool tl_ld_is_arm32(const tl_lib *lib) { return lib && lib->arm32; }
 
 static bool fetch_from_apks(const char *name, uint8_t **out, size_t *len)
 {
     char path[160];
-    snprintf(path, sizeof(path), "lib/arm64-v8a/%s", name);
-    for (int i = 0; i < G.napks; i++) {
-        const tl_zip_entry *e = tl_zip_find(&G.apks[i], path);
-        if (!e) continue;
-        const uint8_t *data; size_t n; bool owned; char err[160];
-        if (!tl_zip_data(&G.apks[i], e, (size_t)1 << 30, &data, &n, &owned, err, sizeof(err))) {
-            tl_log_line("ld: %s: %s", name, err);
-            return false;
+    for (int d = 0; d < 3; d++) {
+        snprintf(path, sizeof(path), "%s%s", k_lib_dirs[d], name);
+        for (int i = 0; i < G.napks; i++) {
+            const tl_zip_entry *e = tl_zip_find(&G.apks[i], path);
+            if (!e) continue;
+            const uint8_t *data; size_t n; bool owned; char err[160];
+            if (!tl_zip_data(&G.apks[i], e, (size_t)1 << 30, &data, &n, &owned, err, sizeof(err))) {
+                tl_log_line("ld: %s: %s", name, err);
+                return false;
+            }
+            if (!owned) {
+                uint8_t *copy = malloc(n);
+                if (!copy) return false;
+                memcpy(copy, data, n);
+                data = copy;
+            }
+            *out = (uint8_t *)data;
+            *len = n;
+            if (d) tl_log_line("ld: %s from %s (32-bit ARM, translated)", name, k_lib_dirs[d]);
+            return true;
         }
-        if (!owned) {
-            uint8_t *copy = malloc(n);
-            if (!copy) return false;
-            memcpy(copy, data, n);
-            data = copy;
-        }
-        *out = (uint8_t *)data;
-        *len = n;
-        return true;
     }
     return false;
 }
@@ -341,6 +395,7 @@ static void *sym_value(const tl_lib *L, const elf_sym *s)
 
 static const elf_sym *lib_find(const tl_lib *L, const char *name)
 {
+    if (L->arm32) return NULL;
     if (!L->symtab || !L->strtab) return NULL;
     if (L->gnu_hash) {
         const uint8_t *g = at(L, L->gnu_hash);
@@ -426,7 +481,7 @@ static tl_lib *find_loaded_ns(const char *name, int ns)
 {
     const char *b = base_name(name);
     tl_lib *sys = NULL;
-    for (int i = 0; i < G.nlibs; i++) {
+    for (int i = 0; i < nlibs_acq(); i++) {
         tl_lib *l = G.libs[i];
         if (strcmp(l->name, name) && strcmp(l->soname, name) && strcmp(base_name(l->name), b) && strcmp(l->soname, b)) continue;
         if (!l->system) { if (ns != NS_SYSTEM) return l; }
@@ -528,10 +583,16 @@ static void *lookup_for(tl_lib *L, const char *name, bool *weak_hit)
 void *tl_ld_sym(tl_lib *lib, const char *name)
 {
     if (lib) {
+        if (lib->arm32) return tl_a32_sym(lib, name);
         const elf_sym *s = lib_find(lib, name);
         return s ? sym_value(lib, s) : NULL;
     }
-    for (int i = 0; i < G.nlibs; i++) {
+    for (int i = 0; i < nlibs_acq(); i++) {
+        if (G.libs[i]->arm32) {
+            void *p = tl_a32_sym(G.libs[i], name);
+            if (p) return p;
+            continue;
+        }
         const elf_sym *s = lib_find(G.libs[i], name);
         if (s) return sym_value(G.libs[i], s);
     }
@@ -543,6 +604,11 @@ void *tl_ld_sym(tl_lib *lib, const char *name)
 void *tl_ld_sym_deep(tl_lib *lib, const char *name, tl_lib **found_in)
 {
     if (!lib) return NULL;
+    if (lib->arm32) {
+        void *p = tl_a32_sym(lib, name);
+        if (p) { if (found_in) *found_in = lib; return p; }
+        return NULL;
+    }
     const elf_sym *s = lib_find(lib, name);
     if (s) { if (found_in) *found_in = lib; return sym_value(lib, s); }
     build_scope(lib);
@@ -559,7 +625,7 @@ void *tl_ld_lib_base(const tl_lib *L) { return L ? (void *)(L->rx - L->base_vadd
 tl_lib *tl_ld_lib_of(const void *addr)
 {
     const uint8_t *a = addr;
-    for (int i = 0; i < G.nlibs; i++) {
+    for (int i = 0; i < nlibs_acq(); i++) {
         tl_lib *L = G.libs[i];
         size_t span = L->npages * PAGE;
         if ((a >= L->rx && a < L->rx + span) || (a >= L->rw && a < L->rw + span)) return L;
@@ -572,7 +638,7 @@ void *tl_ld_aot_writable(const void *addr, size_t bytes)
 {
     if (!addr || bytes == 0) return NULL;
     const uint8_t *a = addr;
-    for (int i = 0; i < G.nlibs; i++) {
+    for (int i = 0; i < nlibs_acq(); i++) {
         tl_lib *L = G.libs[i];
         if (!L->aot || !L->dup) continue;
         size_t span = L->npages * PAGE;
@@ -590,7 +656,7 @@ void *tl_ld_aot_exec(const void *addr)
 {
     if (!addr) return NULL;
     const uint8_t *a = addr;
-    for (int i = 0; i < G.nlibs; i++) {
+    for (int i = 0; i < nlibs_acq(); i++) {
         tl_lib *L = G.libs[i];
         if (!L->aot || !L->dup) continue;
         size_t span = L->npages * PAGE;
@@ -606,7 +672,7 @@ void *tl_ld_aot_exec(const void *addr)
 bool tl_ld_aot_contains(const void *addr)
 {
     const uint8_t *a = addr;
-    for (int i = 0; i < G.nlibs; i++) {
+    for (int i = 0; i < nlibs_acq(); i++) {
         tl_lib *L = G.libs[i];
         if (!L->aot) continue;
         size_t span = (L->npages + L->nstub + 2) * PAGE;
@@ -620,7 +686,7 @@ bool tl_ld_covers(const void *addr, size_t bytes)
 {
     if (!addr || bytes == 0) return false;
     const uint8_t *lo = addr, *hi = lo + bytes;
-    for (int i = 0; i < G.nlibs; i++) {
+    for (int i = 0; i < nlibs_acq(); i++) {
         tl_lib *L = G.libs[i];
         size_t span = (L->npages + L->nstub + 2) * PAGE;
         if (L->rx && lo < L->rx + span && hi > L->rx) return true;
@@ -664,7 +730,7 @@ void *tl_ld_map_code(const char *path, uint64_t off, size_t len, void *at)
     const char *want = base_name(path);
     void *r = NULL;
     pthread_mutex_lock(&G.lock);
-    for (int i = 0; i < G.nlibs && !r; i++) {
+    for (int i = 0; i < nlibs_acq() && !r; i++) {
         tl_lib *L = G.libs[i];
         if (!L->aot) continue;
         /* the file may be a copy the app made, named after the library (JNA's lib_arm64-v8a_libjnidispatch.so) */
@@ -693,7 +759,7 @@ size_t tl_ld_maps(char *buf, size_t n, const char *libdir)
     size_t k = 0;
     if (n) buf[0] = 0;
     pthread_mutex_lock(&G.lock);
-    for (int i = 0; i < G.nlibs && k + 200 < n; i++) {
+    for (int i = 0; i < nlibs_acq() && k + 200 < n; i++) {
         tl_lib *L = G.libs[i];
         if (L->state < 2) continue;
         uintptr_t lo = (uintptr_t)L->rx, hi = lo + L->npages * PAGE;
@@ -707,7 +773,7 @@ size_t tl_ld_maps(char *buf, size_t n, const char *libdir)
 int tl_ld_iterate(tl_ld_phdr_cb cb, void *user)
 {
     int r = 0;
-    for (int i = 0; i < G.nlibs && !r; i++) {
+    for (int i = 0; i < nlibs_acq() && !r; i++) {
         tl_lib *L = G.libs[i];
         if (L->state < 2) continue;
         r = cb((uintptr_t)(L->rx - L->base_vaddr), L->name, L->phdr, L->phnum, user);
@@ -831,6 +897,61 @@ static void *make_stub(const char *name)
  * only their low halves) -- and calls tl_linux_syscall with the arguments and number.
  */
 long tl_linux_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long nr);
+
+/*
+ * Code the guest generates itself (ByteDance's and Pangle's protection stubs, libpglarmor/libnms) was never seen by the loader, so
+ * its `svc #0` reaches Darwin's kernel, which reads the number from x16 and raises SIGSYS. Before such memory is made executable its
+ * `svc #0` words become `udf #0x5c5` (tl_ld_mark_svcs); SIGILL on that marker, or SIGSYS after a raw `svc` that slipped through, is
+ * answered here as the Linux kernel would: tl_linux_syscall with x8 and x0-x5, the result in x0, everything else as it was.
+ */
+#define SVC_MARK 0x000005C5u                       /* udf #0x5c5 */
+static struct sigaction g_prev_sys, g_prev_ill;
+static bool svc_answer(ucontext_t *uc, uint64_t at, uint64_t next)
+{
+    _STRUCT_ARM_THREAD_STATE64 *ss = &uc->uc_mcontext->__ss;
+    uint64_t *x = ss->__x;
+    x[0] = (uint64_t)tl_linux_syscall((long)x[0], (long)x[1], (long)x[2], (long)x[3], (long)x[4], (long)x[5], (long)x[8]);
+    (void)at;
+    __darwin_arm_thread_state64_set_pc_fptr(*ss, (void *)(uintptr_t)next);
+    return true;
+}
+static void svc_signal(int sig, siginfo_t *si, void *ucv)
+{
+    ucontext_t *uc = ucv;
+    uint64_t pc = (uint64_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+    if (sig == SIGILL && pc && *(const uint32_t *)pc == SVC_MARK) { svc_answer(uc, pc, pc + 4); return; }
+    /* a trapped floating-point exception (EC 0x2c): the guest turned FPCR's trap enables on (Colorful's SDL_mixer divides and
+       traps on inexact). Android's cores ignore those bits, Apple's do not: they are cleared and the instruction runs again. */
+    if (sig == SIGILL && ((uc->uc_mcontext->__es.__esr >> 26) & 0x3f) == 0x2c) {
+        static int said; if (!said++) tl_log_line("ld: the guest enabled floating-point traps (fpcr %#x): turned off, as on Android", (unsigned)uc->uc_mcontext->__ns.__fpcr);
+        uc->uc_mcontext->__ns.__fpcr &= ~0x9f00u;
+        return;
+    }
+    if (sig == SIGSYS && pc >= 4 && *(const uint32_t *)(pc - 4) == 0xD4000001u) {
+        static int said; if (!said++) tl_log_line("ld: a raw svc in code the loader never saw (pc %#llx): answered as Linux", (unsigned long long)pc);
+        svc_answer(uc, pc - 4, pc); return;
+    }
+    struct sigaction *prev = sig == SIGSYS ? &g_prev_sys : &g_prev_ill;
+    if (prev->sa_flags & SA_SIGINFO) { if (prev->sa_sigaction) { prev->sa_sigaction(sig, si, ucv); return; } }
+    else if (prev->sa_handler != SIG_DFL && prev->sa_handler != SIG_IGN) { prev->sa_handler(sig); return; }
+    signal(sig, SIG_DFL); raise(sig);
+}
+static void svc_signals_install(void)
+{
+    struct sigaction sa = { 0 };
+    sa.sa_sigaction = svc_signal; sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER; sigemptyset(&sa.sa_mask);
+    sigaction(SIGSYS, &sa, &g_prev_sys);
+    sigaction(SIGILL, &sa, &g_prev_ill);
+}
+static pthread_once_t g_svc_once = PTHREAD_ONCE_INIT;
+void tl_ld_trap_signals(void) { pthread_once(&g_svc_once, svc_signals_install); }
+void tl_ld_mark_svcs(void *addr, size_t len)
+{
+    tl_ld_trap_signals();
+    uint32_t *w = addr; size_t n = len / 4, marked = 0;
+    for (size_t i = 0; i < n; i++) if (w[i] == 0xD4000001u) { w[i] = SVC_MARK; marked++; }
+    if (marked) { static int said; if (said++ < 4) tl_log_line("ld: %zu raw svc in generated code at %p marked", marked, addr); }
+}
 
 __attribute__((naked, used)) void tl_svc_common(void)
 {
@@ -2237,12 +2358,24 @@ static void fill_data_slots(tl_lib *L)
 
 static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
 {
+    tl_ld_trap_signals();       /* raw svc and floating-point traps from the guest's code are answered (svc_signal) */
     /* Mix/copy decisions and the dylib's stub count must see the AOT folder before aot_import runs,
      * otherwise a Mac harness that only sets TL_AOT_DIR in the environment disagrees with the dylib
      * (which was built with g_aot.on) and refuses to load. The app sets the folder itself. */
     if (!g_aot_dir && getenv("TL_AOT_DIR")) tl_ld_set_aot_dir(getenv("TL_AOT_DIR"));
     if (G.nlibs >= MAX_LIBS) { tl_log_line("ld: too many libraries"); return NULL; }
     const elf_ehdr *eh = (const elf_ehdr *)file;
+    if (tl_a32_is_elf(file, flen)) {
+        tl_lib *A = calloc(1, sizeof(*A));
+        if (!A) return NULL;
+        if (!tl_a32_map(A, name, file, flen)) { free(A); return NULL; }
+        snprintf(A->name, sizeof(A->name), "%s", name);
+        snprintf(A->soname, sizeof(A->soname), "%s", name);
+        A->arm32 = true;
+        A->state = 2;
+        publish_lib(A);
+        return A;
+    }
     if (flen < sizeof(*eh) || memcmp(file, "\x7f""ELF", 4) != 0 || eh->e_ident[4] != 2 || eh->e_ident[5] != 1
         || eh->e_machine != EM_AARCH64_) {
         tl_log_line("ld: %s is not a 64-bit little-endian arm64 ELF image", name);
@@ -2407,7 +2540,7 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
                 int64_t imm = (int64_t)((((v >> 5) & 0x7FFFFu) << 2) | ((v >> 29) & 3u));
                 if (imm & 0x100000) imm -= 0x200000;
                 int64_t tv = (int64_t)(code[r].vaddr + k * 4) + imm - (int64_t)base_vaddr;
-                if (tv >= 0 && (size_t)tv < npages * PAGE && ((flags[(size_t)tv / PAGE] & TL_PAGE_W) || (go && !(flags[(size_t)tv / PAGE] & TL_PAGE_X)) || mix[(size_t)tv / PAGE])) stub_bytes += 32;
+                if (tv >= 0 && (size_t)tv < npages * PAGE && ((flags[(size_t)tv / PAGE] & TL_PAGE_W) || !(flags[(size_t)tv / PAGE] & TL_PAGE_X) || mix[(size_t)tv / PAGE])) stub_bytes += 32;   /* redirect_data: read-only data pages too (Qt's QML, libcrypto ran out) */
             }
             else if ((v & 0xFF000000u) == 0x18000000u || (v & 0xFF000000u) == 0x58000000u) { /* ldr literal of copied data */
                 int64_t imm = (int64_t)((v >> 5) & 0x7FFFFu);
@@ -2498,7 +2631,7 @@ static tl_lib *map_library(const char *name, uint8_t *file, size_t flen)
     L->nsyms = count_dynsyms(L);
     L->ncache = dynsym_bound(L, L->nsyms);
     if (L->ncache) L->symcache = calloc(L->ncache, sizeof(uint64_t));
-    if (!g_aot.on) G.libs[G.nlibs++] = L;
+    if (!g_aot.on) publish_lib(L);
     return L;
 }
 
@@ -2739,6 +2872,7 @@ static void aot_fix_cxx_unwind(tl_lib *L)
 
 static bool relocate(tl_lib *L)
 {
+    if (L->arm32) { L->state = 2; return true; }
     size_t count = 0;
     L->state = 1;
     bool ok = do_relas(L, L->rela_src ? L->rela_src : (const uint8_t *)at(L, L->rela), L->relasz, &count)
@@ -2775,7 +2909,7 @@ static bool relocate(tl_lib *L)
                     L->n_unresolved ? ", unresolved imports: " : "", "");
         if (L->n_unresolved) tl_log_line("ld:   %s: %u imports bound to logging stubs", L->name, L->n_unresolved);
         if (ad) tl_log_line("ld:   %s: %zu 'adr' instructions that reach writable data rewritten", L->name, ad);
-        if (L->n_adr_failed) tl_log_line("ld:   %s: %zu 'adr' instructions reach writable data and could not be rewritten", L->name, L->n_adr_failed);
+        if (L->n_adr_failed) tl_log_line("ld:   %s: %zu stub sites (adr to writable data, CTR_EL0 reads) could not be rewritten (stubs %zu/%zu bytes used, islands %zu/%zu)", L->name, L->n_adr_failed, L->stub_used, L->stub_cap, L->isl_used, L->isl_cap);
         if (L->n_ctr) tl_log_line("ld:   %s: %zu reads of CTR_EL0 replaced by a constant", L->name, L->n_ctr);
         if (L->n_svc_far) tl_log_line("ld:   %s: %zu raw system-call sites are out of branch range of the stubs and answer ENOSYS", L->name, L->n_svc_far);
         if (sv) tl_log_line("ld:   %s: %zu raw system-call sites rewritten", L->name, sv);
@@ -2851,12 +2985,13 @@ static tl_lib *load_locked(const char *name, int depth, bool system)
         return NULL;
     }
     char e[160] = "";
-    bool xmem = tl_xmem_open(768u << 20, e, sizeof(e));
+    bool a32 = tl_a32_is_elf(file, flen);
+    bool xmem = a32 ? true : tl_xmem_open(768u << 20, e, sizeof(e));
     if (!xmem) {   /* only libraries made ahead of time (tl_ld_set_aot_dir) can load: map_library says which cannot */
         static bool said;
         if (!said) { said = true; tl_log_line("ld: no executable memory (%s): only libraries made into dylibs ahead of time can load", e); }
     }
-    if (xmem) {   /* adrp, which the loader uses to retarget code at the writable view, reaches +-4 GiB. */
+    if (xmem && !a32) {   /* adrp, which the loader uses to retarget code at the writable view, reaches +-4 GiB. */
         ptrdiff_t d = tl_xmem_delta();
         if (d > ((ptrdiff_t)3 << 30) || d < -((ptrdiff_t)3 << 30)) { tl_log_line("ld: the writable and executable views are %td MiB apart: too far for adrp", d >> 20); free(file); return NULL; }
     }
@@ -2889,6 +3024,10 @@ static bool init_locked(tl_lib *L)
     if (!L || L->state >= 3) return true;
     if (L->state < 2) return false;
     L->state = 3;
+    if (L->arm32) {
+        for (int i = L->ndeps - 1; i >= 0; i--) init_locked(L->deps[i]);
+        return tl_a32_init(L);
+    }
     build_scope(L);
     /* Needed libraries initialise first, in the order the linker would run them: the
      * deepest dependency first. The BFS list is shallowest-first, so walk it backwards. */

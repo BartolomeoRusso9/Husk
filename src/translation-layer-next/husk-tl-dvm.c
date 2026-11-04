@@ -14,6 +14,7 @@
 
 #include "husk-tl-bionic.h"
 #include "husk-tl-internal.h"
+#include "husk-tl-arm32.h"
 #include "husk-tl-ld.h"
 
 int g_dvm_trace;
@@ -146,7 +147,7 @@ static bool dex_add(const uint8_t *b, size_t size, const char *label)
 /* Every classes*.dex in a jar/APK, or a plain .dex file. The data is kept for the life of the process. */
 /* Every jar and APK on the class path, for VMClassLoader.getBootClassPathEntries: libcore serves classpath resources
    (Class.getResourceAsStream) from these, as Android's boot class loader does from its jars. */
-static char *g_cp[64]; static int g_ncp;
+static char *g_cp[64]; static int g_ncp, g_nboot_cp;
 int tl_dvm_class_path(const char **out, int max) { int n = g_ncp < max ? g_ncp : max; for (int i = 0; i < n; i++) out[i] = g_cp[i]; return n; }
 static bool open_path(const char *path)
 {
@@ -163,7 +164,7 @@ static bool open_path(const char *path)
     }
     tl_zip z; char err[160];
     if (!tl_zip_open(&z, path, err, sizeof(err))) { tl_log_line("dvm: %s: %s", path, err); return false; }
-    bool any = false;
+    bool any = false, mapped = false;
     for (int i = 1; i < 100; i++) {
         char name[32];
         if (i == 1) snprintf(name, sizeof(name), "classes.dex"); else snprintf(name, sizeof(name), "classes%d.dex", i);
@@ -171,15 +172,18 @@ static bool open_path(const char *path)
         if (!e) break;
         const uint8_t *data; size_t len; bool owned;
         if (!tl_zip_data(&z, e, (size_t)1 << 30, &data, &len, &owned, err, sizeof(err))) continue;
-        uint8_t *copy = malloc(len);
-        memcpy(copy, data, len);
-        if (owned) free((void *)data);
+        /* A boot jar's stored dex (framework.jar's are 44 MB) is read where the jar is mapped: clean pages the system can drop,
+           not a copy that counts against the phone's memory limit. Boot dexes live as long as the process; the app's are
+           copied, since dropping an app frees them. */
+        const uint8_t *copy;
+        if (!owned && g_nboot_dex < 0) { copy = data; mapped = true; }
+        else { uint8_t *c = malloc(len); memcpy(c, data, len); if (owned) free((void *)data); copy = c; }
         char label[96];
         const char *slash = strrchr(path, '/');
         snprintf(label, sizeof(label), "%s!%s", slash ? slash + 1 : path, name);
         any |= dex_add(copy, len, label);
     }
-    tl_zip_close(&z);
+    if (!mapped) tl_zip_close(&z);          /* else the mapping stays: the dexes above point into it */
     return any;
 }
 
@@ -1159,12 +1163,30 @@ __asm__(
     "  ldp x29, x30, [sp], #32\n"
     "  ret\n");
 
+/* Platform natives AOSP's jars declare: a missing one is a no-op (zero), so a manager still constructs. An app's own library
+ * that failed to load still throws, which is the signal the app is written for. */
+static bool native_platform_ok_to_stub(const char *n)
+{
+    if (!n) return false;
+    return strncmp(n, "android/", 8) == 0 || strncmp(n, "com/android/", 12) == 0
+        || strncmp(n, "com/google/android/", 19) == 0 || strncmp(n, "dalvik/system/", 14) == 0
+        || strncmp(n, "libcore/", 8) == 0;
+}
+
 static bool call_native(dvm_method *m, jobj *self, const jvalue *params, jvalue *ret)
 {
     if (m->intrinsic) return m->intrinsic(self, params, ret);
     void *fn = find_jni(m);
-    if (!fn) return dvm_throw("java/lang/UnsatisfiedLinkError", "No implementation found for %s.%s%s", m->cls->name, m->name, m->sig);
+    if (!fn) {
+        if (native_platform_ok_to_stub(m->cls->name)) {
+            tl_log_line("dvm: missing native %s.%s%s (zero)", m->cls->name, m->name, m->sig);
+            if (ret) memset(ret, 0, sizeof(*ret));
+            return true;
+        }
+        return dvm_throw("java/lang/UnsatisfiedLinkError", "No implementation found for %s.%s%s", m->cls->name, m->name, m->sig);
+    }
     if (g_dvm_trace >= 2) tl_log_line("dvm: jni %s.%s%s", m->cls->name, m->name, m->sig);
+    if (tl_a32_is_fn(fn)) return tl_a32_jni_native(fn, m, self, params, ret);
     int64_t gp[8]; double fp[8]; int64_t stk[256];
     int ng = 0, nf = 0, ns = 0;
     memset(gp, 0, sizeof(gp)); memset(fp, 0, sizeof(fp));
@@ -2036,7 +2058,11 @@ static bool hook_ensure_init(tl_jclass *jc)
 static void *hook_find_method(tl_jclass *jc, const char *name, const char *sig, bool is_static)
 {
     dvm_class *c = dvm_class_of(jc);
-    return c ? dvm_find_method(c, name, sig, is_static) : NULL;
+    dvm_method *m = c ? dvm_find_method(c, name, sig, is_static) : NULL;
+    /* ART's GetMethodID and GetStaticMethodID initialise the class: React Native's natives make a ReadableNativeArray with
+       NewObject, and the class's initialiser is what loads the library that registers its natives */
+    if (m) dvm_ensure_init(c);
+    return m;
 }
 static jvalue hook_invoke(void *method, jobj *self, bool nonvirtual, const jvalue *args)
 {
@@ -2056,6 +2082,7 @@ static bool hook_find_field(tl_jclass *jc, const char *name, const char *sig, bo
     dvm_class *c = dvm_class_of(jc);
     dvm_field *f = c ? dvm_find_field(c, name, is_static) : NULL;
     if (!f) return false;
+    dvm_ensure_init(c);           /* GetFieldID too, as on ART */
     if (is_static) dvm_ensure_init(f->cls);
     *decl = f->cls->jc; *slot = f->slot;
     return true;
@@ -2094,9 +2121,12 @@ bool tl_dvm_start(const char *const *boot, int nboot)
     g_class_class = tl_jni_class("java/lang/Class");
     tl_jni_class("java/lang/Object");
     g_nboot_dex = g_ndex;
+    g_nboot_cp = g_ncp;
     g_string_class = tl_jni_class("java/lang/String");
     return true;
 }
+
+bool tl_dvm_defines_class(const char *jni_name) { return jni_name && cdef_find(jni_name) != NULL; }
 
 bool tl_dvm_add_apk(const char *apk) { return open_path(apk); }
 
@@ -2131,7 +2161,7 @@ static void loader_for(tl_jclass *jc) { if (jc->mirror && jc->mirror->fields) dv
 void dvm_set_app_loader(jobj *loader);
 void dvm_set_app_loader(jobj *loader)
 {
-    if (!loader) return;
+    if (!loader) { g_app_loader = NULL; return; }
     loader->refs = 1u << 30;
     g_app_loader = loader;
     tl_jni_each_declared(loader_for);
@@ -2143,6 +2173,51 @@ void dvm_set_app_loader(jobj *loader)
 static struct { char *path; int first, count; } g_opened[256];
 static int g_nopened;
 static pthread_mutex_t g_open_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static bool boot_dex(dvm_dex *d)
+{
+    if (!d || g_nboot_dex < 0) return true;
+    for (int i = 0; i < g_nboot_dex; i++) if (g_dex[i] == d) return true;
+    return false;
+}
+static bool forget_app_class(tl_jclass *jc, void *user)
+{
+    (void)user;
+    dvm_class *c = dvm_class_of(jc);
+    return c && c->dex && !boot_dex(c->dex);
+}
+void tl_dvm_drop_app(void)
+{
+    if (!g_running || g_nboot_dex < 0) return;
+    tl_jni_forget_if(forget_app_class, NULL);
+    for (int b = 0; b < CBUCKETS; b++) {
+        cdef **pp = &g_cdefs[b];
+        while (*pp) {
+            if ((*pp)->dex && !boot_dex((*pp)->dex)) {
+                cdef *c = *pp; *pp = c->next; free((void *)c->name); free(c);
+            } else pp = &(*pp)->next;
+        }
+    }
+    for (int i = g_nboot_dex; i < g_ndex; i++) {
+        dvm_dex *d = g_dex[i];
+        if (!d) continue;
+        free(d->mcache); free(d->fcache); free(d->tcache); free(d->scache);
+        free((void *)d->b); free(d); g_dex[i] = NULL;
+    }
+    g_ndex = g_nboot_dex;
+    g_app_loader = NULL;
+    for (int i = g_nboot_cp; i < g_ncp; i++) free(g_cp[i]);
+    g_ncp = g_nboot_cp;
+    pthread_mutex_lock(&g_open_lock);
+    int w = 0;
+    for (int i = 0; i < g_nopened; i++) {
+        if (g_opened[i].first >= g_nboot_dex) { free(g_opened[i].path); continue; }
+        g_opened[w++] = g_opened[i];
+    }
+    g_nopened = w;
+    pthread_mutex_unlock(&g_open_lock);
+    tl_log_line("dvm: the app's classes are dropped; the boot path stays");
+}
 
 static jobj *dex_cookie(int first, int count)
 {

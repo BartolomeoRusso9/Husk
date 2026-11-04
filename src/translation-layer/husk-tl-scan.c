@@ -95,7 +95,7 @@ static void note_engine(engine_scan *s, const char *f)
 /* Whether the app really starts through a NativeActivity: its manifest names android.app.NativeActivity, or a class in its dex
  * extends it. A library exporting ANativeActivity_onCreate is not enough on its own: Go's libgojni carries the glue for Go's
  * own mobile package even in an Ebitengine game (AAAAXY), which starts from an ordinary Java activity. */
-static bool starts_native_activity(const char *const *paths, int count)
+static bool starts_native_activity(const char *const *paths, int count, bool *by_manifest)
 {
     static const char name8[] = "android.app.NativeActivity", desc[] = "Landroid/app/NativeActivity;";
     char name16[2 * (sizeof(name8) - 1)];
@@ -113,6 +113,7 @@ static bool starts_native_activity(const char *const *paths, int count)
             if (!tl_zip_data(&z, e, (size_t)256 << 20, &data, &len, &owned, derr, sizeof(derr))) continue;
             found = man ? (memmem(data, len, name16, sizeof(name16)) || memmem(data, len, name8, sizeof(name8) - 1))
                         : memmem(data, len, desc, sizeof(desc) - 1) != NULL;
+            if (found && man && by_manifest) *by_manifest = true;
             if (owned) free((void *)data);
         }
         tl_zip_close(&z);
@@ -325,6 +326,11 @@ char *husk_tl_scan(const char *const *paths, int count)
             abis[abi] = true;
             note_engine(&eng, file);
             if (abi != ABI_ARM64) {
+                if (abi == 1 || abi == 2) {
+                    memset(rep, 0, sizeof(*rep));
+                    rep->ok = true;
+                    write_library(&j, base_name(paths[p]), abi, file, e, rep);
+                }
                 continue;
             }
             nameset_add(own, file);
@@ -366,7 +372,12 @@ char *husk_tl_scan(const char *const *paths, int count)
         tl_zip_close(&z);
     }
     tl_json_end_array(&j);
-    if (eng.native_activity && !starts_native_activity(paths, count)) eng.native_activity = false;
+    bool na_manifest = false;
+    if (eng.native_activity && !starts_native_activity(paths, count, &na_manifest)) eng.native_activity = false;
+    /* An activity of the app's own that extends NativeActivity, with real Java behind it, runs on the Java runtime: its Java does
+       part of the work (Inner Breeze downloads and checks its content bundles there), which the NativeActivity driver never runs.
+       A tiny loader class (Alex vs Bus) or the platform's own activity (Open Golf, whose dex is unused) stays with the driver. */
+    if (eng.native_activity && !na_manifest && dex_bytes > (64 << 10)) eng.native_activity = false;
 
     bool any_native = false;
     for (size_t i = 0; i < NABIS; i++) {
@@ -403,17 +414,18 @@ char *husk_tl_scan(const char *const *paths, int count)
         snprintf(summary, sizeof(summary), "arm64 native code, but %d of %d librar%s "
                  "need%s extra work from the loader.", arm64_trouble, arm64_libs,
                  arm64_libs == 1 ? "y" : "ies", arm64_trouble == 1 ? "s" : "");
+    } else if (abis[1] || abis[2]) {
+        verdict = "native";
+        snprintf(summary, sizeof(summary), "32-bit ARM native code. Husk translates it "
+                 "to arm64 the same way it loads arm64 libraries.");
     } else {
         verdict = "noArm64";
-        bool arm32 = abis[1] || abis[2], x86 = abis[3] || abis[4];
-        if (arm32 && !x86) {
-            snprintf(summary, sizeof(summary), "Native code for 32-bit ARM only. iPhones "
-                     "cannot run 32-bit ARM code at all, so this would need a CPU emulator.");
-        } else if (x86 && !arm32) {
+        bool x86 = abis[3] || abis[4];
+        if (x86) {
             snprintf(summary, sizeof(summary), "Native code for x86 only, which would "
                      "need an x86 translator such as FEXCore.");
         } else {
-            snprintf(summary, sizeof(summary), "Native code, but none of it for arm64.");
+            snprintf(summary, sizeof(summary), "Native code, but none of it for ARM.");
         }
     }
 
