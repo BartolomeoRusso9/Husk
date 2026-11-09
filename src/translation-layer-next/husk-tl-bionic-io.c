@@ -130,6 +130,43 @@ static const char *synth_content(const char *path, char *buf, size_t n)
         tl_ld_maps(buf, n, dir);
         return buf;
     }
+    /* /proc/self/smaps: the maps above, each with its sizes as the kernel gives them. Apps read their page size from it (Instagram's
+       memory timeline throws "Could not get page size" at start up without a KernelPageSize: line); on an iPhone pages are 16 KiB.
+       Entries that do not fit are left out whole. smaps_rollup is the one summary entry. */
+    bool rollup = !strncmp(path, "/proc/", 6) && strstr(path, "/smaps_rollup") && !strcmp(strstr(path, "/smaps_rollup"), "/smaps_rollup");
+    if (rollup || (!strncmp(path, "/proc/", 6) && strstr(path, "/smaps") && !strcmp(strstr(path, "/smaps"), "/smaps"))) {
+        size_t tl_ld_maps(char *buf, size_t n, const char *libdir);
+        char dir[1024]; snprintf(dir, sizeof(dir), "%s/lib", tl_data_dir());
+        char *maps = malloc(n);
+        if (!maps) return NULL;
+        maps[0] = 0;
+        tl_ld_maps(maps, n, dir);
+        size_t o = 0; unsigned long total = 0;
+        buf[0] = 0;
+        for (char *line = maps, *nl; *line; line = nl ? nl + 1 : line + strlen(line)) {
+            nl = strchr(line, '\n');
+            size_t ll = nl ? (size_t)(nl - line) : strlen(line);
+            unsigned long a = 0, b = 0;
+            if (sscanf(line, "%lx-%lx", &a, &b) != 2 || b < a) continue;
+            unsigned long kb = (b - a) / 1024; total += kb;
+            if (rollup) continue;
+            char e[512];
+            int el = snprintf(e, sizeof(e), "%.*s\nSize:           %8lu kB\nKernelPageSize:       16 kB\nMMUPageSize:          16 kB\nRss:            %8lu kB\n"
+                              "Pss:            %8lu kB\nShared_Clean:          0 kB\nShared_Dirty:          0 kB\nPrivate_Clean:         0 kB\n"
+                              "Private_Dirty:  %8lu kB\nReferenced:     %8lu kB\nAnonymous:             0 kB\nSwap:                  0 kB\nLocked:                0 kB\n",
+                              (int)(ll > 300 ? 300 : ll), line, kb, kb, kb, kb, kb);
+            if (el < 0 || el >= (int)sizeof(e) || o + (size_t)el + 1 > n) break;
+            memcpy(buf + o, e, (size_t)el + 1); o += (size_t)el;
+        }
+        if (!rollup && !o)      /* no maps: still one entry, so the page size is there */
+            snprintf(buf, n, "00400000-00404000 r-xp 00000000 00:00 0                          [anon:husk]\nSize:                 16 kB\n"
+                     "KernelPageSize:       16 kB\nMMUPageSize:          16 kB\nRss:                  16 kB\n");
+        if (rollup)
+            snprintf(buf, n, "00000000-ffffffffffff ---p 00000000 00:00 0                          [rollup]\nRss:            %8lu kB\nPss:            %8lu kB\n"
+                     "Private_Dirty:  %8lu kB\nKernelPageSize:       16 kB\nMMUPageSize:          16 kB\nSwap:                  0 kB\n", total, total, total);
+        free(maps);
+        return buf;
+    }
     if (!strcmp(path, "/proc/self/status")) {
         snprintf(buf, n, "Name:\tapp_process64\nState:\tR (running)\nTgid:\t%d\nPid:\t%d\nPPid:\t1\nUid:\t10001\t10001\t10001\t10001\nThreads:\t8\nVmRSS:\t  300000 kB\n", getpid(), getpid());
         return buf;
@@ -1696,6 +1733,26 @@ static void host_signal_entry(int dsig, siginfo_t *info, void *uctx)
     arm_thread_state64_set_pc_fptr(*ss, (void *)(uintptr_t)mine->uc_mcontext.pc);
     if (g) free(g);
     g = mine;
+}
+
+/* A fault in the guest's own code that the guest asked to handle, handed to its handler (the host keeps the signal itself): Meta's
+ * distract hooks a function by writing an undefined instruction at its start, and its SIGILL handler moves the thread on to the
+ * hook. True when the handler ran and moved the thread on (a different pc), so the instruction is not run again as it was. */
+bool tl_bionic_guest_fault(int dsig, siginfo_t *info, void *uctx)
+{
+    int gsig = tl_signal_from_darwin(dsig);
+    if (gsig <= 0 || gsig >= 32) return false;
+    void *h = g_guest_sig[gsig].handler;
+    if (!h || h == (void *)1 || !(g_guest_sig[gsig].flags & 4 /* SA_SIGINFO */)) return false;
+    ucontext_t *uc = uctx;
+    if (!uc || !uc->uc_mcontext) return false;
+    uint64_t pc = arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+    static __thread int depth;
+    if (depth > 2) return false;            /* the handler faulting the same way: let it end */
+    depth++;
+    host_signal_entry(dsig, info, uctx);
+    depth--;
+    return arm_thread_state64_get_pc(uc->uc_mcontext->__ss) != pc;
 }
 
 static int is_fault_signal(int g) { return g == 4 || g == 5 || g == 6 || g == 7 || g == 8 || g == 11 || g == 31; }   /* 31: SIGSYS, raw svc in generated code (husk-tl-ld.c) */

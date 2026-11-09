@@ -56,8 +56,21 @@ static void set_xreg(struct __darwin_arm_thread_state64 *ss, unsigned r, uint64_
 }
 
 /* Store `bytes` of a register's value at the executable address `addr`, through the writable view. */
+static uint64_t g_store_pc;     /* the guest instruction doing the store being carried out (for the log) */
 static bool put(uint64_t addr, const void *value, unsigned bytes)
 {
+    /* the first stores, with where they go and who stores: a library whose code was rewritten wrongly says which hook did it */
+    static int said;
+    if (said < 48) {
+        said++;
+        const char *wl = NULL, *tl = NULL; const void *ws = NULL, *ts = NULL;
+        const char *wsym = tl_ld_symbol_at((const void *)(uintptr_t)g_store_pc, &wl, &ws);
+        const char *tsym = tl_ld_symbol_at((const void *)(uintptr_t)addr, &tl, &ts);
+        uint64_t v = 0; memcpy(&v, value, bytes > 8 ? 8 : bytes);
+        tl_log_line("codewrite: %u bytes %#llx at %s %s+%#lx, stored by %s %s", bytes, (unsigned long long)v,
+                    tl ? tl : "?", tsym ? tsym : "?", (unsigned long)(addr - (uint64_t)(uintptr_t)ts),
+                    wl ? wl : "?", wsym ? wsym : "?");
+    }
     if (tl_xmem_is_rx((const void *)addr) && tl_xmem_is_rx((const void *)(addr + bytes - 1))) {
         memcpy((void *)(addr + (uint64_t)tl_xmem_delta()), value, bytes);
         tl_xmem_flush((const void *)addr, bytes);
@@ -203,6 +216,7 @@ static void on_fault(int sig, siginfo_t *info, void *uc)
             g_emulated++;
             return;
         }
+        g_store_pc = u->uc_mcontext->__ss.__pc;
         if (info && (tl_xmem_is_rx(info->si_addr) || tl_ld_aot_writable(info->si_addr, 1)) && emulate(u->uc_mcontext)) {
             u->uc_mcontext->__ss.__pc += 4;
             g_emulated++;

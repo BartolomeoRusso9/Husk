@@ -24,6 +24,8 @@
 #include "husk-tl-internal.h"
 #include "husk-tl-jni.h"
 #include "husk-tl-ld.h"
+#include "husk-tl-xmem.h"
+#include "husk-tl-codewrite.h"
 #include "husk-tl-godot.h"
 #include "husk-tl-unity.h"
 #include "husk-tl-audio.h"
@@ -114,6 +116,18 @@ static struct sigaction g_prev[32];
 static void on_fatal(int sig, siginfo_t *info, void *uctx)
 {
     ucontext_t *uc = uctx;
+    /* An illegal instruction in the guest's code that the guest handles itself: Meta's distract (Instagram's Lyra and breakpad)
+       hooks a function by writing an undefined instruction at its start, and its SIGILL handler sends the thread on to the
+       hook, as Android delivers it there. */
+    if (sig == SIGILL && tl_xmem_is_rx((const void *)(uintptr_t)uc->uc_mcontext->__ss.__pc)) {
+        bool tl_bionic_guest_fault(int dsig, siginfo_t *info, void *uctx);
+        static int said;
+        if (tl_bionic_guest_fault(sig, info, uctx)) {
+            if (!said++) tl_log_line("native: the app's own SIGILL handler took the illegal instruction at %p (a distract hook)",
+                                     (void *)(uintptr_t)uc->uc_mcontext->__ss.__pc);
+            return;
+        }
+    }
     char tn[40] = "", a[200], b[200], c[200];
     pthread_getname_np(pthread_self(), tn, sizeof(tn));
     where(a, sizeof(a), (uintptr_t)uc->uc_mcontext->__ss.__pc);
@@ -122,6 +136,16 @@ static void on_fatal(int sig, siginfo_t *info, void *uctx)
     tl_log_line("=== FATAL signal %d on thread '%s': fault address %p (%s)", sig, tn, info->si_addr, c);
     tl_log_line("    pc %s", a);
     tl_log_line("    lr %s", b);
+    /* the instruction that faulted, as the CPU sees it and (JIT region) as its writable view holds it: an illegal instruction
+       in a library's code means something rewrote it */
+    {
+        uintptr_t pc = (uintptr_t)uc->uc_mcontext->__ss.__pc;
+        if (tl_xmem_is_rx((const void *)pc) && tl_xmem_is_rx((const void *)(pc + 15))) {
+            const uint32_t *x = (const uint32_t *)pc, *w = (const uint32_t *)(pc + (uintptr_t)tl_xmem_delta());
+            tl_log_line("    code at pc %08x %08x %08x %08x (writable view %08x %08x %08x %08x), %ld code stores so far",
+                        x[0], x[1], x[2], x[3], w[0], w[1], w[2], w[3], tl_codewrite_count());
+        }
+    }
     uintptr_t fp = uc->uc_mcontext->__ss.__fp;
     for (int i = 0; i < 12 && fp && (fp & 7) == 0 && fp > 0x100000000ull; i++) {
         uintptr_t *f = (uintptr_t *)fp;
