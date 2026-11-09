@@ -418,6 +418,10 @@ public class Activity extends ContextThemeWrapper implements Window.Callback, Ke
     public void onBackPressed() {
         if (mActionBar != null && mActionBar.collapseActionView()) return;
         if (mFragments != null && mFragments.popBackStackImmediate()) return;
+        // Back on the app's first screen: Android 12 and later keep the activity (the task goes to the background, nothing is
+        // finished), and an iPhone has nowhere to go back to, so nothing happens. Finishing it ended the app, and Husk started it
+        // again from its splash screen -- what a swipe in from the left edge did on an app's home screen.
+        if (isTaskRoot() && husk.AppRunner.stackSize() <= 1) return;
         finishAfterTransition();
     }
     public boolean onSearchRequested() { return false; }
