@@ -15,13 +15,13 @@
 # depend on the code, so it is always compiled from src/java-framework.
 #
 # Usage: scripts/stage_release_runtime.sh
-#   HUSK_RELEASE   release tag to take the Android files from (default 3.3)
+#   HUSK_RELEASE   release tag to take the Android files from (default 3.4)
 #   HUSK_JDK       JDK home (default: $JAVA_HOME, then Homebrew's openjdk)
 #   HUSK_D8        r8.jar (default: downloaded from Google's Maven, R8 8.5.35)
 set -euo pipefail
 
 HUSK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RELEASE="${HUSK_RELEASE:-3.3}"
+RELEASE="${HUSK_RELEASE:-3.4}"
 R8_VERSION=8.5.35
 CACHE="$HUSK_ROOT/third_party/release-runtime"
 JRT="$HUSK_ROOT/build/java-runtime"
