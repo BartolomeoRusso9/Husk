@@ -190,20 +190,35 @@ void tl_gc_thread_attach(void)
 
 /* ------------------------------------------------------------------ marking */
 
-static uint64_t *g_stack;                           /* the mark stack: mmap'd, committed as it is touched */
-static size_t g_stack_cap, g_sp;
-static bool g_overflow;
+/* Marking runs on the collector's thread and its helpers at once (MAX_HELPERS, one per core): each has a mark stack of its own,
+ * an object is claimed by whoever sets its mark first (compare-and-swap, so the other bits a parallel pass sets are kept), and a
+ * thread with a lot of work hands half of it to a shared pool the idle ones take from. */
+static uint64_t *g_stack;                           /* the collector's mark stack: mmap'd, committed as it is touched */
+static size_t g_stack_cap;
+static __thread uint64_t *t_stack;
+static __thread size_t t_sp, t_cap;
+static _Atomic bool g_overflow;
 static uint8_t g_epoch = 1;                         /* 1 or 2: the mark this collection gives */
 
-static inline bool marked(const jobj *o) { return ((o->gc >> TL_GC_MARK_SHIFT) & 3) == g_epoch; }
-static inline void set_mark(jobj *o) { o->gc = (uint8_t)((o->gc & ~(3u << TL_GC_MARK_SHIFT)) | (g_epoch << TL_GC_MARK_SHIFT)); }
+static inline bool marked(const jobj *o) { return ((__atomic_load_n(&o->gc, __ATOMIC_RELAXED) >> TL_GC_MARK_SHIFT) & 3) == g_epoch; }
+static inline bool claim(jobj *o)
+{
+    uint8_t g = __atomic_load_n(&o->gc, __ATOMIC_RELAXED);
+    for (;;) {
+        if (((g >> TL_GC_MARK_SHIFT) & 3) == g_epoch) return false;
+        uint8_t n = (uint8_t)((g & ~(3u << TL_GC_MARK_SHIFT)) | (g_epoch << TL_GC_MARK_SHIFT));
+        if (__atomic_compare_exchange_n(&o->gc, &g, n, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return true;
+    }
+}
+/* the other bits of gc, set and cleared by the passes over the slots while other threads may be marking */
+static inline void gc_or(jobj *o, uint8_t bits) { __atomic_fetch_or(&o->gc, bits, __ATOMIC_RELAXED); }
+static inline void gc_and(jobj *o, uint8_t bits) { __atomic_fetch_and(&o->gc, bits, __ATOMIC_RELAXED); }
 
 static inline void push(jobj *o)
 {
-    if (marked(o)) return;
-    set_mark(o);
-    if (g_sp == g_stack_cap) { g_overflow = true; return; }
-    g_stack[g_sp++] = (uint64_t)(uintptr_t)o;
+    if (!claim(o)) return;
+    if (t_sp == t_cap) { g_overflow = true; return; }
+    t_stack[t_sp++] = (uint64_t)(uintptr_t)o;
 }
 
 void tl_gc_mark_word(uintptr_t w)
@@ -348,9 +363,110 @@ static void scan_object(jobj *o)
     if (o->native) mark_one_step((uintptr_t)o->native);
 }
 
+/* The shared pool, and how many threads are still marking. */
+static uint64_t *g_pool;
+static size_t g_pool_cap;
+static _Atomic size_t g_pool_n;
+static atomic_flag g_pool_spin = ATOMIC_FLAG_INIT;
+static _Atomic int g_busy;
+static inline void pool_lock(void) { while (atomic_flag_test_and_set_explicit(&g_pool_spin, memory_order_acquire)) __asm__ volatile("yield"); }
+static inline void pool_unlock(void) { atomic_flag_clear_explicit(&g_pool_spin, memory_order_release); }
+static void donate(void)
+{
+    size_t k = t_sp / 2;
+    pool_lock();
+    size_t n = atomic_load_explicit(&g_pool_n, memory_order_relaxed);
+    if (n + k <= g_pool_cap) { memcpy(g_pool + n, t_stack + t_sp - k, k * sizeof(uint64_t)); atomic_store(&g_pool_n, n + k); t_sp -= k; }
+    pool_unlock();
+}
+static bool take(void)
+{
+    if (!atomic_load_explicit(&g_pool_n, memory_order_relaxed)) return false;
+    pool_lock();
+    size_t n = atomic_load_explicit(&g_pool_n, memory_order_relaxed), k = n < 1024 ? n : 1024;
+    if (k > t_cap - t_sp) k = t_cap - t_sp;
+    if (k) { memcpy(t_stack + t_sp, g_pool + n - k, k * sizeof(uint64_t)); t_sp += k; atomic_store(&g_pool_n, n - k); }
+    pool_unlock();
+    return k > 0;
+}
+/* Mark until nothing is left anywhere: this thread's stack, then the pool; done when no thread is marking and the pool is empty. */
 static void drain(void)
 {
-    while (g_sp && !g_overflow) scan_object((jobj *)(uintptr_t)g_stack[--g_sp]);
+    for (;;) {
+        while (t_sp && !g_overflow) {
+            scan_object((jobj *)(uintptr_t)t_stack[--t_sp]);
+            if (t_sp > 2048 && atomic_load_explicit(&g_pool_n, memory_order_relaxed) < 4096) donate();
+        }
+        if (g_overflow) { atomic_fetch_sub(&g_busy, 1); return; }
+        if (take()) continue;
+        atomic_fetch_sub(&g_busy, 1);
+        for (;;) {
+            if (g_overflow) return;
+            if (atomic_load_explicit(&g_pool_n, memory_order_relaxed)) {
+                atomic_fetch_add(&g_busy, 1);
+                if (take()) break;
+                atomic_fetch_sub(&g_busy, 1);
+            }
+            if (!atomic_load(&g_busy) && !atomic_load(&g_pool_n)) return;
+            __asm__ volatile("yield");
+        }
+    }
+}
+
+/* The collector's helpers: threads of its own (never suspended), one per core but the collector's, that run a phase with it. */
+#define MAX_HELPERS 7
+static int g_nhelpers;
+static _Atomic int g_helpers_ready;
+static thread_act_t g_helper_ports[MAX_HELPERS];
+static pthread_mutex_t g_par_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_par_cv = PTHREAD_COND_INITIALIZER, g_par_done = PTHREAD_COND_INITIALIZER;
+static void (*g_par_fn)(int id, int n);
+static uint64_t g_par_gen;
+static int g_par_left;
+static void *map_array(size_t entries, size_t *cap);
+
+static void *helper_thread(void *arg)
+{
+    int id = (int)(intptr_t)arg;
+    pthread_setname_np("husk-gc-helper");
+    t_stack = map_array(16u << 20, &t_cap);
+    g_helper_ports[id - 1] = mach_thread_self();
+    atomic_fetch_add(&g_helpers_ready, 1);
+    uint64_t seen = 0;
+    for (;;) {
+        pthread_mutex_lock(&g_par_lock);
+        while (g_par_gen == seen) pthread_cond_wait(&g_par_cv, &g_par_lock);
+        seen = g_par_gen;
+        void (*fn)(int, int) = g_par_fn;
+        pthread_mutex_unlock(&g_par_lock);
+        /* t_sp is kept from one phase to the next: what a pass pushed here is marked through by the par_mark after it */
+        fn(id, g_nhelpers + 1);
+        pthread_mutex_lock(&g_par_lock);
+        if (--g_par_left == 0) pthread_cond_signal(&g_par_done);
+        pthread_mutex_unlock(&g_par_lock);
+    }
+    return NULL;
+}
+/* fn(id, n) on the collector (id 0) and every helper, returning when all are done */
+static void run_parallel(void (*fn)(int id, int n))
+{
+    pthread_mutex_lock(&g_par_lock);
+    g_par_fn = fn; g_par_left = g_nhelpers; g_par_gen++;
+    pthread_cond_broadcast(&g_par_cv);
+    pthread_mutex_unlock(&g_par_lock);
+    fn(0, g_nhelpers + 1);
+    pthread_mutex_lock(&g_par_lock);
+    while (g_par_left) pthread_cond_wait(&g_par_done, &g_par_lock);
+    pthread_mutex_unlock(&g_par_lock);
+}
+static bool is_helper(thread_act_t t) { for (int i = 0; i < g_nhelpers; i++) if (g_helper_ports[i] == t) return true; return false; }
+/* everything pushed so far, on any thread, marked through by all of them */
+static void mark_phase(int id, int n) { (void)id; (void)n; drain(); }
+static void par_mark(void)
+{
+    atomic_store(&g_busy, g_nhelpers + 1);
+    if (t_sp > 1) donate();
+    run_parallel(mark_phase);
 }
 
 /* ------------------------------------------------------------------ the world */
@@ -407,7 +523,7 @@ static bool suspend_all(void)
         if (task_threads(mach_task_self(), &list, &n) != KERN_SUCCESS) break;
         bool fresh = false;
         for (mach_msg_type_number_t i = 0; i < n; i++) {
-            bool known = list[i] == self;
+            bool known = list[i] == self || is_helper(list[i]);
             for (int k = 0; !known && k < g_nsuspended; k++) known = g_suspended[k] == list[i];
             if (!known && g_nsuspended < MAX_SUSPENDED && thread_suspend(list[i]) == KERN_SUCCESS) {
                 g_suspended[g_nsuspended++] = list[i];      /* the port's reference is kept until resume_all */
@@ -546,6 +662,99 @@ static void note_finalizable(void *jclass)
              p_ < e_; p_ += SLOT_SIZE) \
             for (jobj *o = (jobj *)p_; o; o = NULL)
 
+/* A part of the slots, for thread id of n: each chunk is cut in SUB pieces, dealt round. */
+#define SUB 8
+#define EACH_SLOT_PART(o, id, n) \
+    for (uint32_t k_ = (uint32_t)(id); k_ < g_nchunks * SUB; k_ += (uint32_t)(n)) \
+        for (uint8_t *b_ = (uint8_t *)g_chunks[k_ / SUB], \
+                     *l_ = (b_ <= g_bump && g_bump <= b_ + SLOTS_PER_CHUNK * SLOT_SIZE) ? g_bump : b_ + SLOTS_PER_CHUNK * SLOT_SIZE, \
+                     *p_ = b_ + (size_t)(k_ % SUB) * (SLOTS_PER_CHUNK / SUB) * SLOT_SIZE, \
+                     *e_ = (k_ % SUB == SUB - 1) ? l_ : b_ + (size_t)(k_ % SUB + 1) * (SLOTS_PER_CHUNK / SUB) * SLOT_SIZE; \
+             p_ < e_ && p_ < l_; p_ += SLOT_SIZE) \
+            for (jobj *o = (jobj *)p_; o; o = NULL)
+
+/* What each thread counted in a parallel pass, added up after it. */
+typedef struct { uint64_t objects, pinned, finalizing, condemned, reachable; } part_counts;
+static part_counts g_part[MAX_HELPERS + 1];
+static jobj **g_garbage;
+static size_t g_gcap;
+static _Atomic size_t g_ngarbage;
+static atomic_flag g_finq_spin = ATOMIC_FLAG_INIT;
+static bool g_finalize;
+
+static void reset_phase(int id, int n) { (void)id; (void)n; t_sp = 0; }
+static void threads_phase(int id, int n)
+{
+    for (int i = id; i < g_nsuspended; i += n) scan_thread(g_suspended[i]);
+}
+static void data_phase(int id, int n)
+{
+    for (int i = id; i < g_ndata; i += n) tl_gc_mark_range((const void *)g_data[i].lo, g_data[i].hi - g_data[i].lo);
+}
+/* objects native code holds a reference to, and every class mirror */
+static void pinned_phase(int id, int n)
+{
+    part_counts *c = &g_part[id];
+    EACH_SLOT_PART(o, id, n) {
+        if (!(o->gc & TL_GC_ALLOCATED)) continue;
+        c->objects++;
+        if (is_root_by_refs(o) && !marked(o)) { c->pinned++; push(o); }
+    }
+}
+/* what is still unmarked cannot be reached. One to finalize first is kept, with all it reaches, and queued; one whose class has
+   not been asked about yet is kept until it has been */
+static void fin_phase(int id, int n)
+{
+    part_counts *c = &g_part[id];
+    EACH_SLOT_PART(o, id, n) {
+        if (!(o->gc & TL_GC_ALLOCATED) || marked(o) || o->kind != TL_K_OBJECT || !o->cls) continue;
+        int fin = o->cls->gc_fin;
+        if (fin == 0 || (fin > 0 && !(o->gc & TL_GC_FINALIZED))) {
+            push(o);
+            /* finalize() too waits for a second collection to agree: a Bitmap's frees its pixels, and one found unreachable
+               only because its reference was in flight was still being drawn (CoreGraphics faulted on the main thread) */
+            if (fin > 0 && !(o->gc & TL_GC_CONDEMNED)) { gc_or(o, TL_GC_FIN_WAIT); continue; }
+            if (fin > 0 && g_finalize) {
+                while (atomic_flag_test_and_set_explicit(&g_finq_spin, memory_order_acquire)) __asm__ volatile("yield");
+                if (g_nfinq < g_finq_cap) { gc_or(o, TL_GC_FINALIZED); g_finq[g_nfinq++] = o; c->finalizing++; }
+                atomic_flag_clear_explicit(&g_finq_spin, memory_order_release);
+            } else if (fin > 0) c->finalizing++;
+        }
+    }
+}
+/* An object is freed when two collections in a row find it unreachable: a reference only in flight when one collection looked
+   (between a register and memory the collector does not read, a thread copying a struct) has landed somewhere it reads by the
+   next, and an object freed under a thread still using it is a crash. */
+static void sweep_phase(int id, int n)
+{
+    part_counts *c = &g_part[id];
+    jobj *buf[512]; size_t nb = 0;
+    EACH_SLOT_PART(o, id, n) {
+        if (!(o->gc & TL_GC_ALLOCATED)) continue;
+        if (marked(o)) {
+            if (o->gc & TL_GC_FIN_WAIT) { o->gc = (uint8_t)((o->gc & ~TL_GC_FIN_WAIT) | TL_GC_CONDEMNED); c->condemned++; continue; }
+            o->gc &= (uint8_t)~TL_GC_CONDEMNED; c->reachable++; continue;
+        }
+        if (!(o->gc & TL_GC_CONDEMNED)) { o->gc |= TL_GC_CONDEMNED; c->condemned++; continue; }
+        buf[nb++] = o;
+        if (nb == 512) {
+            size_t at = atomic_fetch_add(&g_ngarbage, nb);
+            if (at + nb <= g_gcap) memcpy(g_garbage + at, buf, nb * sizeof(*buf)); else g_overflow = true;
+            nb = 0;
+        }
+    }
+    if (nb) {
+        size_t at = atomic_fetch_add(&g_ngarbage, nb);
+        if (at + nb <= g_gcap) memcpy(g_garbage + at, buf, nb * sizeof(*buf)); else g_overflow = true;
+    }
+}
+static void free_owned(jobj *o);
+static void free_phase(int id, int n)
+{
+    size_t ng = atomic_load(&g_ngarbage);
+    for (size_t i = (size_t)id; i < ng; i += (size_t)n) free_owned(g_garbage[i]);
+}
+
 static bool collect(gstats *s, int mode)
 {
     memset(s, 0, sizeof(*s));
@@ -554,15 +763,23 @@ static bool collect(gstats *s, int mode)
     tl_jni_each_class(note_finalizable);           /* asking may have declared classes */
     collect_data_ranges();
     collect_stacks();
+    /* the memory map, before the world stops: what goes away meanwhile is passed over when read (gc_fault), and a pause no longer
+       waits for a walk of every VM region */
+    collect_regions();
     size_t gcap = 0;
     uint64_t total = atomic_load(&g_allocated) + 65536;
     jobj **garbage = map_array(total + total / 2, &gcap);
     if (!g_stack) g_stack = map_array(64u << 20, &g_stack_cap);
-    if (!garbage || !g_stack) { unmap_array(garbage, gcap); s->aborted = true; return false; }
-    size_t ngarbage = 0;
-    g_sp = 0; g_overflow = false;
+    if (!g_pool) g_pool = map_array(16u << 20, &g_pool_cap);
+    if (!garbage || !g_stack || !g_pool) { unmap_array(garbage, gcap); s->aborted = true; return false; }
+    t_stack = g_stack; t_cap = g_stack_cap; t_sp = 0;
+    run_parallel(reset_phase);                  /* every helper's stack empty, whatever an aborted collection left */
+    atomic_store(&g_pool_n, 0);
+    g_garbage = garbage; g_gcap = gcap; atomic_store(&g_ngarbage, 0);
+    memset(g_part, 0, sizeof(g_part));
+    g_overflow = false;
     g_epoch = g_epoch == 1 ? 2 : 1;
-    bool finalize = mode == TL_GC_ON && g_finq;
+    g_finalize = mode == TL_GC_ON && g_finq;
 
     /* the locks the roots change under, then the arena's (no new objects while marking), then everyone else stops */
     bool locked = false;
@@ -583,57 +800,33 @@ static bool collect(gstats *s, int mode)
     bool stopped = suspend_all();
     double t1 = now_ms();
 
-    /* ---- the world is stopped: no malloc, no logging, no locks until resume_all */
+    /* ---- the world is stopped: no malloc, no logging, no locks but the collector's own until resume_all. Each step runs on
+       the collector and its helpers at once, and par_mark marks through what the step found. */
     if (stopped) {
-        collect_regions();
         double p0 = now_ms();
-        for (int i = 0; i < g_nsuspended; i++) { scan_thread(g_suspended[i]); drain(); }
+        run_parallel(threads_phase); par_mark();
         double p1 = now_ms(); s->t_threads = p1 - p0;
-        for (int i = 0; i < g_ndata; i++) { tl_gc_mark_range((const void *)g_data[i].lo, g_data[i].hi - g_data[i].lo); drain(); }
+        run_parallel(data_phase); par_mark();
         double p2 = now_ms(); s->t_data = p2 - p1;
-        scan_registered_threads(); drain();
-        tl_jni_gc_roots(); drain();
-        dvm_gc_roots(); drain();
-        dvm_natives_gc_roots(); drain();
-        tl_loop_gc_roots(); drain();
+        scan_registered_threads();
+        tl_jni_gc_roots();
+        dvm_gc_roots();
+        dvm_natives_gc_roots();
+        tl_loop_gc_roots();
+        /* objects waiting for their finalize(): the finalizer thread has not taken them yet (the queue is locked meanwhile) */
+        for (size_t i = 0; i < g_nfinq; i++) push(g_finq[i]);
+        par_mark();
         double p3 = now_ms(); s->t_roots = p3 - p2;
-        /* objects native code holds a reference to, and every class mirror */
-        EACH_SLOT(o) {
-            if (!(o->gc & TL_GC_ALLOCATED)) continue;
-            s->objects++;
-            if (is_root_by_refs(o) && !marked(o)) { s->pinned++; push(o); drain(); }
-        }
+        run_parallel(pinned_phase); par_mark();
         double p4 = now_ms(); s->t_pinned = p4 - p3;
-        /* what is still unmarked cannot be reached. One to finalize first is kept, with all it reaches, and queued; one whose class
-           has not been asked about yet is kept until it has been */
-        EACH_SLOT(o) {
-            if (!(o->gc & TL_GC_ALLOCATED) || marked(o) || o->kind != TL_K_OBJECT || !o->cls) continue;
-            int fin = o->cls->gc_fin;
-            if (fin == 0 || (fin > 0 && !(o->gc & TL_GC_FINALIZED))) {
-                push(o); drain();
-                /* finalize() too waits for a second collection to agree: a Bitmap's frees its pixels, and one found unreachable
-                   only because its reference was in flight was still being drawn (CoreGraphics faulted on the main thread) */
-                if (fin > 0 && !(o->gc & TL_GC_CONDEMNED)) { o->gc |= TL_GC_FIN_WAIT; continue; }
-                if (fin > 0 && finalize && g_nfinq < g_finq_cap) { o->gc |= TL_GC_FINALIZED; g_finq[g_nfinq++] = o; s->finalizing++; }
-                else if (fin > 0) s->finalizing++;
-            }
-        }
+        run_parallel(fin_phase); par_mark();
         double p5 = now_ms(); s->t_fin = p5 - p4;
-        if (!g_overflow) {
-            /* An object is freed when two collections in a row find it unreachable: a reference only in flight when one
-               collection looked (between a register and memory the collector does not read, a thread copying a struct) has
-               landed somewhere it reads by the next, and an object freed under a thread still using it is a crash. */
-            EACH_SLOT(o) {
-                if (!(o->gc & TL_GC_ALLOCATED)) continue;
-                if (marked(o)) {
-                    if (o->gc & TL_GC_FIN_WAIT) { o->gc = (uint8_t)((o->gc & ~TL_GC_FIN_WAIT) | TL_GC_CONDEMNED); s->condemned++; continue; }
-                    o->gc &= (uint8_t)~TL_GC_CONDEMNED; s->reachable++; continue;
-                }
-                if (!(o->gc & TL_GC_CONDEMNED)) { o->gc |= TL_GC_CONDEMNED; s->condemned++; continue; }
-                if (ngarbage < gcap) garbage[ngarbage++] = o; else g_overflow = true;
-            }
-        }
+        if (!g_overflow) run_parallel(sweep_phase);
         s->t_sweep = now_ms() - p5;
+        for (int i = 0; i <= g_nhelpers; i++) {
+            s->objects += g_part[i].objects; s->pinned += g_part[i].pinned; s->finalizing += g_part[i].finalizing;
+            s->condemned += g_part[i].condemned; s->reachable += g_part[i].reachable;
+        }
     }
     resume_all();
     /* ---- the world runs again */
@@ -645,10 +838,11 @@ static bool collect(gstats *s, int mode)
        out, but a collection must not overlap the next one's view of them either. Freeing what they own does not touch the arena. */
     if (!stopped || g_overflow) s->aborted = true;
     else {
+        size_t ngarbage = atomic_load(&g_ngarbage);
         s->garbage = ngarbage;
         for (size_t i = 0; i < ngarbage; i++) s->garbage_bytes += owned_bytes(garbage[i]);
         if (mode == TL_GC_ON && !atomic_load(&g_outside)) {
-            for (size_t i = 0; i < ngarbage; i++) free_owned(garbage[i]);
+            run_parallel(free_phase);              /* what the garbage owned, freed on every core: the arena is locked meanwhile */
             for (size_t i = 0; i < ngarbage; i++) slot_free_locked(garbage[i]);
             s->freed = true;
         }
@@ -723,6 +917,20 @@ void tl_gc_start(int mode)
     started = true;
     g_finq = map_array(1u << 20, &g_finq_cap);
     gc_fault_install();
+    /* one helper per core but the collector's (TL_GC_HELPERS overrides: 0 marks on the collector alone), ready before the first
+       collection: a helper still starting would be suspended with the app */
+    long cores = sysconf(_SC_NPROCESSORS_ONLN);
+    int want = getenv("TL_GC_HELPERS") ? atoi(getenv("TL_GC_HELPERS")) : (int)(cores > 1 ? cores - 1 : 0);
+    if (want > MAX_HELPERS) want = MAX_HELPERS;
+    if (want < 0) want = 0;
+    for (int i = 0; i < want; i++) {
+        pthread_t h; pthread_attr_t ha; pthread_attr_init(&ha); pthread_attr_setdetachstate(&ha, PTHREAD_CREATE_DETACHED);
+        pthread_attr_setstacksize(&ha, 1u << 20);
+        if (pthread_create(&h, &ha, helper_thread, (void *)(intptr_t)(i + 1)) == 0) g_nhelpers++;
+        pthread_attr_destroy(&ha);
+    }
+    while (atomic_load(&g_helpers_ready) < g_nhelpers) usleep(200);
+    tl_log_line("gc: marking on %d threads", g_nhelpers + 1);
     pthread_t t;
     pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
     pthread_attr_setstacksize(&a, 8u << 20);
