@@ -13,18 +13,20 @@ enum WhatsNew {
     }
 
     /// The version whose notes these are. A build of the same version shows nothing again.
-    static let version = "3.4"
+    static let version = "3.5"
     static let items: [Item] = [
-        Item(symbol: "shippingbox.fill", title: "More Android apps",
-             detail: "Microsoft Word, Slack, Gmail, Teams, Deezer, Flipboard and Picsart get past the crashes that stopped them. React Native's new architecture and Qt 6 start, and libGDX and other OpenGL apps draw again."),
-        Item(symbol: "paintbrush.fill", title: "Looks better",
-             detail: "Rounded buttons are proper pills, and toolbars, window backgrounds and more color formats behave as they do on a phone."),
-        Item(symbol: "memorychip", title: "Less \"out of memory\"",
-             detail: "Fewer thread and address space crashes on sideloaded installs, and Unity games keep their frame rate up. Settings > Performance shows whether Increased Memory Limit and Extended Address Space are on."),
-        Item(symbol: "globe", title: "Japanese",
-             detail: "Husk is now in Japanese too, thanks to Yuki-1018."),
+        Item(symbol: "memorychip", title: "Apps keep running",
+             detail: "Java apps' memory is collected as they run, so they no longer close after a few minutes. Settings > Memory turns it off or to measuring only."),
+        Item(symbol: "speedometer", title: "Smoother and sharper",
+             detail: "Java apps draw only what changed, at up to 120 Hz on ProMotion iPhones, and apps built for Android 15 run edge to edge under the clock and the home indicator."),
+        Item(symbol: "square.and.arrow.up.on.square", title: "Works with your iPhone",
+             detail: "Notifications, sharing files and photos both ways, links that open in Safari, Phone, Mail and Maps, and downloads that land in Photos."),
+        Item(symbol: "apps.iphone", title: "Install as App",
+             detail: "An Android app can be added to the Home Screen as an app of its own that opens straight into it."),
+        Item(symbol: "play.rectangle.fill", title: "Instagram and video",
+             detail: "Instagram starts and plays its videos with sound: AV1 video, xHE-AAC audio and Meta's crash hooks now work."),
         Item(symbol: "wrench.and.screwdriver.fill", title: "Fixes",
-             detail: "Importing a .p12, or launching with one saved, no longer crashes on iOS 27. Remove and Uninstall open next to their buttons on iPad, and Winlator's Settings no longer crashes."),
+             detail: "The back swipe no longer restarts a Java app, and apps that draw on more than one canvas at a time no longer show pictures upside down."),
     ]
 
     private static let seenKey = "husk.whatsNew.seen"

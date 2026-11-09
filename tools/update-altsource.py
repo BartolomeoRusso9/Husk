@@ -74,7 +74,7 @@ def main():
         if parts[:3] < [1, 0, 0]:
             v["minOSVersion"] = "16.4"
     # AltStore and SideStore compare these to the app's CFBundleVersion: add each release's here
-    builds = {"3.4": "149", "3.3": "148"}
+    builds = {"3.5": "150", "3.4": "149", "3.3": "148"}
     for v in husk_versions:
         if v["version"] in builds:
             v["buildVersion"] = builds[v["version"]]
