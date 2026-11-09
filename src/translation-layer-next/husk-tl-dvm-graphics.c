@@ -311,11 +311,10 @@ static uint32_t sweep_at(const gshader *s, float t)
     return s->colors[s->ncolors - 1];
 }
 
-/* Fill the current clip with the shader, the paint's alpha applied. The path to fill is already the clip. */
-static void shader_fill(CGContextRef c, const gshader *s, float alpha)
+/* The shader drawn over the current clip, at full opacity: what shader_fill does, or renders once into its cache. */
+static void shader_paint(CGContextRef c, const gshader *s)
 {
     CGContextSaveGState(c);
-    CGContextSetAlpha(c, alpha);
     CGContextConcatCTM(c, s->local);
     CGGradientDrawingOptions ext = s->tile == 0 ? (kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation) : 0;
     if (s->kind == SH_LINEAR) {
@@ -379,6 +378,95 @@ static void shader_fill(CGContextRef c, const gshader *s, float alpha)
             }
         }
     }
+    CGContextRestoreGState(c);
+}
+
+/* Gradients, cached. CoreGraphics works out a gradient pixel by pixel each time it is drawn, and an app's backgrounds are drawn
+ * every frame the same: a fifth of Leghe FC's main thread went on its blue header's gradients, at 1179x2556. A gradient drawn a
+ * second time with the same colours, geometry and transform on a canvas of the same size is rendered once, over the whole canvas,
+ * into an image, and from then on copied in through the clip. Keyed by what it draws, not by the Shader object: apps make a new
+ * one in each onDraw. At most GCACHE_BYTES of images; the oldest goes first. */
+#define GCACHE_N 16
+#define GCACHE_SEEN 64
+#define GCACHE_BYTES (160u << 20)
+typedef struct { uint64_t key; CGImageRef img; size_t bytes; uint64_t used; } gcache_entry;
+static gcache_entry g_gcache[GCACHE_N];
+static uint64_t g_gseen[GCACHE_SEEN];
+static unsigned g_gseen_at;
+static uint64_t g_gtick;
+static size_t g_gbytes;
+static pthread_mutex_t g_glock = PTHREAD_MUTEX_INITIALIZER;
+
+static uint64_t fnv(uint64_t h, const void *p, size_t n) { const uint8_t *b = p; for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ull; } return h; }
+static uint64_t shader_key(const gshader *s, CGAffineTransform ctm, size_t w, size_t h)
+{
+    uint64_t k = 1469598103934665603ull;
+    k = fnv(k, &s->kind, sizeof(s->kind)); k = fnv(k, &s->tile, sizeof(s->tile));
+    float g[5] = { s->x0, s->y0, s->x1, s->y1, s->r }; k = fnv(k, g, sizeof(g));
+    k = fnv(k, &s->ncolors, sizeof(s->ncolors));
+    if (s->ncolors > 0) { k = fnv(k, s->colors, sizeof(uint32_t) * (size_t)s->ncolors); k = fnv(k, s->pos, sizeof(float) * (size_t)s->ncolors); }
+    k = fnv(k, &s->local, sizeof(s->local)); k = fnv(k, &ctm, sizeof(ctm));
+    k = fnv(k, &w, sizeof(w)); k = fnv(k, &h, sizeof(h));
+    return k;
+}
+static void shader_fill(CGContextRef c, const gshader *s, float alpha)
+{
+    size_t w = CGBitmapContextGetWidth(c), h = CGBitmapContextGetHeight(c);
+    if (s->kind != SH_BITMAP && w && h && w * h * 4 <= GCACHE_BYTES / 4) {
+        CGAffineTransform ctm = CGContextGetCTM(c);
+        uint64_t key = shader_key(s, ctm, w, h);
+        CGImageRef img = NULL;
+        bool second = false;
+        pthread_mutex_lock(&g_glock);
+        for (int i = 0; i < GCACHE_N; i++) if (g_gcache[i].img && g_gcache[i].key == key) { img = CGImageRetain(g_gcache[i].img); g_gcache[i].used = ++g_gtick; break; }
+        if (!img) {
+            for (int i = 0; i < GCACHE_SEEN; i++) if (g_gseen[i] == key) { second = true; g_gseen[i] = 0; break; }
+            if (!second) { g_gseen[g_gseen_at++ % GCACHE_SEEN] = key; }
+        }
+        pthread_mutex_unlock(&g_glock);
+        if (!img && second) {
+            /* the gradient over the whole canvas, in its device space (the cache's pixels are the canvas's) */
+            CGContextRef r = CGBitmapContextCreate(NULL, w, h, 8, w * 4, rgb(), kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+            if (r) {
+                CGContextConcatCTM(r, ctm);
+                shader_paint(r, s);
+                img = CGBitmapContextCreateImage(r);
+                CGContextRelease(r);
+            }
+            if (img) {
+                pthread_mutex_lock(&g_glock);
+                int slot = -1; uint64_t oldest = UINT64_MAX;
+                for (int i = 0; i < GCACHE_N; i++) { if (!g_gcache[i].img) { slot = i; break; } if (g_gcache[i].used < oldest) { oldest = g_gcache[i].used; slot = i; } }
+                size_t bytes = w * h * 4;
+                while (g_gbytes + bytes > GCACHE_BYTES) {           /* over the budget: the least recently drawn go */
+                    int v = -1; uint64_t o = UINT64_MAX;
+                    for (int i = 0; i < GCACHE_N; i++) if (g_gcache[i].img && g_gcache[i].used < o) { o = g_gcache[i].used; v = i; }
+                    if (v < 0) break;
+                    CGImageRelease(g_gcache[v].img); g_gbytes -= g_gcache[v].bytes; g_gcache[v].img = NULL;
+                    if (slot < 0 || g_gcache[slot].img) slot = v;
+                }
+                if (slot >= 0) {
+                    if (g_gcache[slot].img) { CGImageRelease(g_gcache[slot].img); g_gbytes -= g_gcache[slot].bytes; }
+                    g_gcache[slot] = (gcache_entry){ key, CGImageRetain(img), bytes, ++g_gtick };
+                    g_gbytes += bytes;
+                }
+                pthread_mutex_unlock(&g_glock);
+            }
+        }
+        if (img) {
+            CGContextSaveGState(c);
+            CGContextSetAlpha(c, alpha);
+            CGContextConcatCTM(c, CGAffineTransformInvert(ctm));
+            CGContextSetInterpolationQuality(c, kCGInterpolationNone);
+            CGContextDrawImage(c, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), img);
+            CGContextRestoreGState(c);
+            CGImageRelease(img);
+            return;
+        }
+    }
+    CGContextSaveGState(c);
+    CGContextSetAlpha(c, alpha);
+    shader_paint(c, s);
     CGContextRestoreGState(c);
 }
 
