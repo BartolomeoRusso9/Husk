@@ -792,7 +792,7 @@ static void b_ANativeActivity_flags(void *a, uint32_t add, uint32_t remove) { (v
 static void b_ANativeActivity_input(void *a, uint32_t flags) { (void)a; (void)flags; }
 
 
-typedef struct tl_nwindow { atomic_int refs; int width, height, format; void *layer; jobj *texture; void *bits; } tl_nwindow;
+typedef struct tl_nwindow { atomic_int refs; int width, height, format; void *layer; jobj *texture; void *bits; int asked_format; uint8_t *rgba; } tl_nwindow;
 static tl_nwindow g_window = { 1, 1080, 2400, 1, NULL, NULL, NULL };
 
 void tl_nwindow_configure(int w, int h, void *layer) { g_window.width = w; g_window.height = h; g_window.layer = layer; }
@@ -840,22 +840,85 @@ static void b_ANativeWindow_acquire(tl_nwindow *w) { if (w) atomic_fetch_add(&w-
 static void b_ANativeWindow_release(tl_nwindow *w)
 {
     if (!w) return;
-    if (atomic_fetch_sub(&w->refs, 1) == 1 && w != &g_window) { free(w->bits); free(w); }
+    if (atomic_fetch_sub(&w->refs, 1) == 1 && w != &g_window) {
+        if (w->texture) {
+            jvalue a[1]; a[0].j = (int64_t)(uintptr_t)w;
+            tl_jni_call(w->texture, "huskDisconnect", "(J)V", a);
+            if (tl_jni_pending()) tl_jni_clear();
+        }
+        free(w->bits); free(w->rgba); free(w);
+    }
 }
 /* software drawing (ANativeWindow_lock): only texture windows have a buffer the app can write */
 typedef struct { int32_t width, height, stride, format; void *bits; uint32_t reserved[6]; } tl_nwbuffer;
+/* The YUV layouts a software video decoder asks a window for (dav1d's AV1 frames, as YV12): Android's YV12 is the Y plane, then
+ * V, then U, each row 16-byte aligned; NV21 is Y then interleaved V/U. The window keeps the buffer in the format asked and turns
+ * it into RGBA when the frame is posted -- given RGBA instead, the decoder's luma showed as a pale picture repeated four times. */
+enum { NW_YV12 = 0x32315659, NW_NV21 = 0x11 };
+static size_t nw_align16(size_t v) { return (v + 15) & ~(size_t)15; }
+static bool nw_yuv(const tl_nwindow *w) { return w->asked_format == NW_YV12 || w->asked_format == NW_NV21; }
+static size_t nw_bytes(const tl_nwindow *w)
+{
+    size_t W = (size_t)w->width, H = (size_t)w->height;
+    if (w->asked_format == NW_YV12) { size_t ys = nw_align16(W), cs = nw_align16(ys / 2); return ys * H + 2 * cs * ((H + 1) / 2); }
+    if (w->asked_format == NW_NV21) return W * H + W * ((H + 1) / 2) + 16;
+    return W * H * 4;
+}
+static inline uint8_t nw_clamp(int v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
+/* BT.601, video range, as decoders write it */
+static void nw_to_rgba(tl_nwindow *w)
+{
+    int W = w->width, H = w->height;
+    const uint8_t *y = w->bits, *u, *v; size_t ys, cs; int cstep;
+    if (w->asked_format == NW_YV12) {
+        ys = nw_align16((size_t)W); cs = nw_align16(ys / 2);
+        v = y + ys * (size_t)H; u = v + cs * (size_t)((H + 1) / 2); cstep = 1;
+    } else {
+        ys = (size_t)W; cs = (size_t)W;
+        v = y + ys * (size_t)H; u = v + 1; cstep = 2;
+    }
+    uint8_t *o = w->rgba;
+    for (int r = 0; r < H; r++) {
+        const uint8_t *yr = y + ys * (size_t)r, *ur = u + cs * (size_t)(r / 2), *vr = v + cs * (size_t)(r / 2);
+        uint8_t *orow = o + (size_t)r * (size_t)W * 4;
+        for (int c = 0; c < W; c++) {
+            int Y = (yr[c] - 16) * 298, U = ur[(c / 2) * cstep] - 128, V = vr[(c / 2) * cstep] - 128;
+            orow[4 * c]     = nw_clamp((Y + 409 * V + 128) >> 8);
+            orow[4 * c + 1] = nw_clamp((Y - 100 * U - 208 * V + 128) >> 8);
+            orow[4 * c + 2] = nw_clamp((Y + 516 * U + 128) >> 8);
+            orow[4 * c + 3] = 255;
+        }
+    }
+}
 static int b_ANativeWindow_lock(tl_nwindow *w, tl_nwbuffer *out, void *dirty)
 {
     (void)dirty;
     if (!w || !w->texture || !out) return -22;
-    if (!w->bits) w->bits = calloc((size_t)w->width * w->height, 4);
+    {
+        jvalue a[1]; a[0].j = (int64_t)(uintptr_t)w;
+        bool ok = tl_jni_call(w->texture, "huskConnect", "(J)Z", a).z;
+        if (tl_jni_pending()) { tl_jni_clear(); ok = true; }
+        if (!ok) return -22;
+    }
+    if (!w->bits) w->bits = calloc(nw_bytes(w), 1);
     if (!w->bits) return -12;
-    out->width = w->width; out->height = w->height; out->stride = w->width; out->format = 1; out->bits = w->bits;
+    bool yuv = nw_yuv(w);
+    out->width = w->width; out->height = w->height; out->bits = w->bits;
+    out->format = yuv ? w->asked_format : 1;
+    out->stride = w->asked_format == NW_YV12 ? (int32_t)nw_align16((size_t)w->width) : w->width;
+    static int said; if (said < 3) { said++; tl_log_line("ndk: ANativeWindow_lock %dx%d, format %#x%s", w->width, w->height, out->format, yuv ? " (YUV, turned into RGBA when posted)" : ""); }
     return 0;
 }
 static int b_ANativeWindow_unlockAndPost(tl_nwindow *w)
 {
     if (!w || !w->texture || !w->bits) return -22;
+    if (nw_yuv(w)) {
+        if (!w->rgba) w->rgba = malloc((size_t)w->width * (size_t)w->height * 4);
+        if (!w->rgba) return -12;
+        nw_to_rgba(w);
+        tl_nwindow_post(w, w->rgba, w->width, w->height, false);
+        return 0;
+    }
     tl_nwindow_post(w, w->bits, w->width, w->height, false);
     return 0;
 }
@@ -864,8 +927,13 @@ static int b_ANativeWindow_getHeight(tl_nwindow *w) { return w ? w->height : 0; 
 static int b_ANativeWindow_getFormat(tl_nwindow *w) { return w ? w->format : 0; }
 static int b_ANativeWindow_setBuffersGeometry(tl_nwindow *w, int width, int height, int format)
 {
-    (void)format;
-    if (w && w != &g_window && width > 0 && height > 0 && (width != w->width || height != w->height)) { w->width = width; w->height = height; free(w->bits); w->bits = NULL; }
+    if (!w || w == &g_window) return 0;
+    static int said; if (said < 6) { said++; tl_log_line("ndk: ANativeWindow_setBuffersGeometry %dx%d format %#x", width, height, format); }
+    bool resize = width > 0 && height > 0 && (width != w->width || height != w->height);
+    bool reformat = format && format != w->asked_format;
+    if (resize) { w->width = width; w->height = height; }
+    if (reformat) w->asked_format = format;
+    if (resize || reformat) { free(w->bits); w->bits = NULL; free(w->rgba); w->rgba = NULL; }
     return 0;
 }
 static void *b_ANativeWindow_toSurface(void *env, void *w) { (void)env; (void)w; return NULL; }

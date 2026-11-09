@@ -27,6 +27,7 @@ public class TextureView extends View {
     private final Paint mPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private Bitmap mShown;
     private Surface mCanvasSurface;
+    private static int sSaid;
     public TextureView(android.content.Context c) { super(c); }
     public TextureView(android.content.Context c, android.util.AttributeSet a) { super(c, a); }
     public TextureView(android.content.Context c, android.util.AttributeSet a, int s) { super(c, a, s); }
@@ -91,6 +92,7 @@ public class TextureView extends View {
         Bitmap f = t != null ? t.huskFront() : null;
         if (f != null) {
             if (f != mShown) { mShown = f; if (mListener != null) mListener.onSurfaceTextureUpdated(t); }
+            if (sSaid < 3) { sSaid++; android.util.Log.i("HuskVideo", "drawn " + f.getWidth() + "x" + f.getHeight() + " into " + getWidth() + "x" + getHeight() + ", transform " + mMatrix + ", view scale " + getScaleX() + "," + getScaleY() + " rotation " + getRotation() + "/" + getRotationX()); }
             int save = c.save();
             c.concat(mMatrix);
             Paint p = mLayerPaint != null ? mLayerPaint : mPaint;

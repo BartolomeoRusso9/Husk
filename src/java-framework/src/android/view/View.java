@@ -989,7 +989,14 @@ public class View implements Drawable.Callback, KeyEvent.Callback {
     public void invalidate(Rect dirty) { invalidateHusk(); }
     public void invalidate(int l, int t, int r, int b) { invalidateHusk(); }
     void invalidateParent() { if (mRoot != null) mRoot.invalidate(); }
-    public void postInvalidate() { if (mRoot != null) mRoot.invalidateFromAnyThread(); }
+    /** This view drawn again, from any thread (a video's frames arrive on the decoder's): only its rectangle, as invalidate(). */
+    public void postInvalidate() {
+        if (mRoot == null) return;
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) { invalidate(); return; }
+        if (sMain == null) sMain = new android.os.Handler(android.os.Looper.getMainLooper());
+        sMain.post(this::invalidate);
+    }
+    private static android.os.Handler sMain;
     public void postInvalidate(int l, int t, int r, int b) { postInvalidate(); }
     public void postInvalidateDelayed(long ms) { postDelayed(this::invalidate, ms); }
     public void postInvalidateOnAnimation() { postInvalidate(); }

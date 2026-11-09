@@ -395,7 +395,12 @@ typedef struct gcanvas {
 static gcanvas *cv_new(gbitmap *b)
 {
     gcanvas *v = calloc(1, sizeof(*v));
-    v->bm = b; v->c = b->ctx;
+    /* a context of its own on the bitmap's pixels: two canvases on one bitmap (an app making a new Canvas(bitmap) each frame
+       before the last one is collected) each flipped the bitmap's shared context, and what they drew came out upside down
+       until the older one was freed -- Instagram's videos turned over and back as they played */
+    v->bm = b;
+    v->c = CGBitmapContextCreate(b->px, (size_t)b->w, (size_t)b->h, 8, b->stride, rgb(), kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    if (!v->c) { v->c = b->ctx; CGContextRetain(v->c); }
     CGContextSaveGState(v->c);              /* the canvas's own level, undone when it is freed */
     CGContextTranslateCTM(v->c, 0, b->h);
     CGContextScaleCTM(v->c, 1, -1);
@@ -412,6 +417,7 @@ static void cv_free(gcanvas *v)
         v->depth--;
     }
     CGContextRestoreGState(v->c);
+    CGContextRelease(v->c);
     free(v);
 }
 static CGBlendMode blend_of(int mode);
