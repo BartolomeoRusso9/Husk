@@ -1630,7 +1630,8 @@ static bool varhandle(const char *mode, const char *shorty, jobj *vh, const uint
 #define B4 (w >> 12)
 #define AA (w >> 8)
 #define THROW_IF(c) do { if (c) goto exception; } while (0)
-#define NEXT(n) do { pc += (n); goto dispatch; } while (0)
+#define DISPATCH() do { w = insns[pc]; goto *k_ops[w & 0xFF]; } while (0)
+#define NEXT(n) do { pc += (n); DISPATCH(); } while (0)
 
 static bool interpret(dvm_method *m, uint64_t *regs, jvalue *ret)
 {
@@ -1641,47 +1642,56 @@ static bool interpret(dvm_method *m, uint64_t *regs, jvalue *ret)
     jobj *caught = NULL;
     if ((m->flags & 0x20) /* synchronized */) dvm_monitor_enter((m->flags & 8) ? m->cls->jc->mirror : RL(regs, m->regs - m->ins));
 
-dispatch:;
-    uint16_t w = insns[pc];
+    /* threaded dispatch: each handler jumps straight to the next one's (k_ops), one indirect branch per handler for the CPU to
+       predict, where a switch funnels every instruction through one */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winitializer-overrides"
+    static void *const k_ops[256] = { [0 ... 255] = &&op_default, [0x00] = &&op_0x00, [0x01] = &&op_0x01, [0x02] = &&op_0x02, [0x03] = &&op_0x03, [0x04] = &&op_0x04, [0x05] = &&op_0x05, [0x06] = &&op_0x06, [0x07] = &&op_0x07, [0x08] = &&op_0x08, [0x09] = &&op_0x09, [0x0a] = &&op_0x0a, [0x0b] = &&op_0x0b, [0x0c] = &&op_0x0c, [0x0d] = &&op_0x0d, [0x0e] = &&op_0x0e, [0x0f] = &&op_0x0f, [0x10] = &&op_0x10, [0x11] = &&op_0x11, [0x12] = &&op_0x12, [0x13] = &&op_0x13, [0x14] = &&op_0x14, [0x15] = &&op_0x15, [0x16] = &&op_0x16, [0x17] = &&op_0x17, [0x18] = &&op_0x18, [0x19] = &&op_0x19, [0x1a] = &&op_0x1a, [0x1b] = &&op_0x1b, [0x1c] = &&op_0x1c, [0x1d] = &&op_0x1d, [0x1e] = &&op_0x1e, [0x1f] = &&op_0x1f, [0x20] = &&op_0x20, [0x21] = &&op_0x21, [0x22] = &&op_0x22, [0x23] = &&op_0x23, [0x24] = &&op_0x24, [0x25] = &&op_0x25, [0x26] = &&op_0x26, [0x27] = &&op_0x27, [0x28] = &&op_0x28, [0x29] = &&op_0x29, [0x2a] = &&op_0x2a, [0x2b] = &&op_0x2b, [0x2c] = &&op_0x2c, [0x2d] = &&op_0x2d, [0x2e] = &&op_0x2e, [0x2f] = &&op_0x2f, [0x30] = &&op_0x30, [0x31] = &&op_0x31, [0x32] = &&op_0x32, [0x33] = &&op_0x33, [0x34] = &&op_0x34, [0x35] = &&op_0x35, [0x36] = &&op_0x36, [0x37] = &&op_0x37, [0x38] = &&op_0x38, [0x39] = &&op_0x39, [0x3a] = &&op_0x3a, [0x3b] = &&op_0x3b, [0x3c] = &&op_0x3c, [0x3d] = &&op_0x3d, [0x44] = &&op_0x44, [0x45] = &&op_0x45, [0x46] = &&op_0x46, [0x47] = &&op_0x47, [0x48] = &&op_0x48, [0x49] = &&op_0x49, [0x4a] = &&op_0x4a, [0x4b] = &&op_0x4b, [0x4c] = &&op_0x4c, [0x4d] = &&op_0x4d, [0x4e] = &&op_0x4e, [0x4f] = &&op_0x4f, [0x50] = &&op_0x50, [0x51] = &&op_0x51, [0x52] = &&op_0x52, [0x53] = &&op_0x53, [0x54] = &&op_0x54, [0x55] = &&op_0x55, [0x56] = &&op_0x56, [0x57] = &&op_0x57, [0x58] = &&op_0x58, [0x59] = &&op_0x59, [0x5a] = &&op_0x5a, [0x5b] = &&op_0x5b, [0x5c] = &&op_0x5c, [0x5d] = &&op_0x5d, [0x5e] = &&op_0x5e, [0x5f] = &&op_0x5f, [0x60] = &&op_0x60, [0x61] = &&op_0x61, [0x62] = &&op_0x62, [0x63] = &&op_0x63, [0x64] = &&op_0x64, [0x65] = &&op_0x65, [0x66] = &&op_0x66, [0x67] = &&op_0x67, [0x68] = &&op_0x68, [0x69] = &&op_0x69, [0x6a] = &&op_0x6a, [0x6b] = &&op_0x6b, [0x6c] = &&op_0x6c, [0x6d] = &&op_0x6d, [0x6e] = &&op_0x6e, [0x6f] = &&op_0x6f, [0x70] = &&op_0x70, [0x71] = &&op_0x71, [0x72] = &&op_0x72, [0x74] = &&op_0x74, [0x75] = &&op_0x75, [0x76] = &&op_0x76, [0x77] = &&op_0x77, [0x78] = &&op_0x78, [0x7b] = &&op_0x7b, [0x7c] = &&op_0x7c, [0x7d] = &&op_0x7d, [0x7e] = &&op_0x7e, [0x7f] = &&op_0x7f, [0x80] = &&op_0x80, [0x81] = &&op_0x81, [0x82] = &&op_0x82, [0x83] = &&op_0x83, [0x84] = &&op_0x84, [0x85] = &&op_0x85, [0x86] = &&op_0x86, [0x87] = &&op_0x87, [0x88] = &&op_0x88, [0x89] = &&op_0x89, [0x8a] = &&op_0x8a, [0x8b] = &&op_0x8b, [0x8c] = &&op_0x8c, [0x8d] = &&op_0x8d, [0x8e] = &&op_0x8e, [0x8f] = &&op_0x8f };
+#pragma clang diagnostic pop
+    uint16_t w;
+dispatch:
+    w = insns[pc];
+    goto *k_ops[w & 0xFF];
+
     switch (w & 0xFF) {
-    case 0x00: {                                                   /* nop, and the data payloads (skipped by size) */
+    case 0x00: op_0x00: {                                                   /* nop, and the data payloads (skipped by size) */
         uint16_t ident = w;
         if (ident == 0x0100) NEXT(4 + FETCH(1) * 2);
         if (ident == 0x0200) NEXT(2 + FETCH(1) * 4);
         if (ident == 0x0300) { uint32_t n = FETCH(2) | (uint32_t)FETCH(3) << 16; NEXT(4 + (FETCH(1) * n + 1) / 2); }
         NEXT(1);
     }
-    case 0x01: regs[A4] = (uint32_t)regs[B4]; NEXT(1);
-    case 0x02: regs[AA] = (uint32_t)regs[FETCH(1)]; NEXT(2);
-    case 0x03: regs[FETCH(1)] = (uint32_t)regs[FETCH(2)]; NEXT(3);
-    case 0x04: regs[A4] = regs[B4]; regs[A4 + 1] = regs[B4 + 1]; NEXT(1);
-    case 0x05: { uint16_t b = FETCH(1); uint64_t lo = regs[b], hi = regs[b + 1]; regs[AA] = lo; regs[AA + 1] = hi; NEXT(2); }
-    case 0x06: { uint16_t a = FETCH(1), b = FETCH(2); uint64_t lo = regs[b], hi = regs[b + 1]; regs[a] = lo; regs[a + 1] = hi; NEXT(3); }
-    case 0x07: regs[A4] = regs[B4]; NEXT(1);
-    case 0x08: regs[AA] = regs[FETCH(1)]; NEXT(2);
-    case 0x09: regs[FETCH(1)] = regs[FETCH(2)]; NEXT(3);
-    case 0x0a: regs[AA] = (uint32_t)result.i; NEXT(1);
-    case 0x0b: regs[AA] = (uint64_t)result.j; NEXT(1);
-    case 0x0c: WL(regs, AA, (jobj *)result.l); NEXT(1);
-    case 0x0d: regs[AA] = (uint64_t)(uintptr_t)caught; caught = NULL; NEXT(1);
-    case 0x0e: ret->j = 0; goto done;
-    case 0x0f: ret->j = 0; ret->i = RI(regs, AA); goto done;
-    case 0x10: ret->j = RJ(regs, AA); goto done;
-    case 0x11: ret->l = RL(regs, AA); goto done;
-    case 0x12: WI(regs, A4, ((int32_t)(w << 16)) >> 28); NEXT(1);
-    case 0x13: WI(regs, AA, (int16_t)FETCH(1)); NEXT(2);
-    case 0x14: WI(regs, AA, (int32_t)(FETCH(1) | (uint32_t)FETCH(2) << 16)); NEXT(3);
-    case 0x15: WI(regs, AA, (int32_t)((uint32_t)FETCH(1) << 16)); NEXT(2);
-    case 0x16: WJ(regs, AA, (int16_t)FETCH(1)); NEXT(2);
-    case 0x17: WJ(regs, AA, (int32_t)(FETCH(1) | (uint32_t)FETCH(2) << 16)); NEXT(3);
-    case 0x18: WJ(regs, AA, (int64_t)(FETCH(1) | (uint64_t)FETCH(2) << 16 | (uint64_t)FETCH(3) << 32 | (uint64_t)FETCH(4) << 48)); NEXT(5);
-    case 0x19: WJ(regs, AA, (int64_t)((uint64_t)FETCH(1) << 48)); NEXT(2);
-    case 0x1a: WL(regs, AA, const_string(dex, FETCH(1))); NEXT(2);
-    case 0x1b: WL(regs, AA, const_string(dex, FETCH(1) | (uint32_t)FETCH(2) << 16)); NEXT(3);
-    case 0x1c: WL(regs, AA, resolve_type(dex, FETCH(1))->mirror); NEXT(2);
-    case 0x1d: { jobj *o = RL(regs, AA); THROW_IF(!o && !dvm_throw("java/lang/NullPointerException", "monitor-enter on null")); dvm_monitor_enter(o); NEXT(1); }
-    case 0x1e: { jobj *o = RL(regs, AA); THROW_IF(!o && !dvm_throw("java/lang/NullPointerException", "monitor-exit on null")); dvm_monitor_exit(o); NEXT(1); }
-    case 0x1f: {                                                   /* check-cast */
+    case 0x01: op_0x01: regs[A4] = (uint32_t)regs[B4]; NEXT(1);
+    case 0x02: op_0x02: regs[AA] = (uint32_t)regs[FETCH(1)]; NEXT(2);
+    case 0x03: op_0x03: regs[FETCH(1)] = (uint32_t)regs[FETCH(2)]; NEXT(3);
+    case 0x04: op_0x04: regs[A4] = regs[B4]; regs[A4 + 1] = regs[B4 + 1]; NEXT(1);
+    case 0x05: op_0x05: { uint16_t b = FETCH(1); uint64_t lo = regs[b], hi = regs[b + 1]; regs[AA] = lo; regs[AA + 1] = hi; NEXT(2); }
+    case 0x06: op_0x06: { uint16_t a = FETCH(1), b = FETCH(2); uint64_t lo = regs[b], hi = regs[b + 1]; regs[a] = lo; regs[a + 1] = hi; NEXT(3); }
+    case 0x07: op_0x07: regs[A4] = regs[B4]; NEXT(1);
+    case 0x08: op_0x08: regs[AA] = regs[FETCH(1)]; NEXT(2);
+    case 0x09: op_0x09: regs[FETCH(1)] = regs[FETCH(2)]; NEXT(3);
+    case 0x0a: op_0x0a: regs[AA] = (uint32_t)result.i; NEXT(1);
+    case 0x0b: op_0x0b: regs[AA] = (uint64_t)result.j; NEXT(1);
+    case 0x0c: op_0x0c: WL(regs, AA, (jobj *)result.l); NEXT(1);
+    case 0x0d: op_0x0d: regs[AA] = (uint64_t)(uintptr_t)caught; caught = NULL; NEXT(1);
+    case 0x0e: op_0x0e: ret->j = 0; goto done;
+    case 0x0f: op_0x0f: ret->j = 0; ret->i = RI(regs, AA); goto done;
+    case 0x10: op_0x10: ret->j = RJ(regs, AA); goto done;
+    case 0x11: op_0x11: ret->l = RL(regs, AA); goto done;
+    case 0x12: op_0x12: WI(regs, A4, ((int32_t)(w << 16)) >> 28); NEXT(1);
+    case 0x13: op_0x13: WI(regs, AA, (int16_t)FETCH(1)); NEXT(2);
+    case 0x14: op_0x14: WI(regs, AA, (int32_t)(FETCH(1) | (uint32_t)FETCH(2) << 16)); NEXT(3);
+    case 0x15: op_0x15: WI(regs, AA, (int32_t)((uint32_t)FETCH(1) << 16)); NEXT(2);
+    case 0x16: op_0x16: WJ(regs, AA, (int16_t)FETCH(1)); NEXT(2);
+    case 0x17: op_0x17: WJ(regs, AA, (int32_t)(FETCH(1) | (uint32_t)FETCH(2) << 16)); NEXT(3);
+    case 0x18: op_0x18: WJ(regs, AA, (int64_t)(FETCH(1) | (uint64_t)FETCH(2) << 16 | (uint64_t)FETCH(3) << 32 | (uint64_t)FETCH(4) << 48)); NEXT(5);
+    case 0x19: op_0x19: WJ(regs, AA, (int64_t)((uint64_t)FETCH(1) << 48)); NEXT(2);
+    case 0x1a: op_0x1a: WL(regs, AA, const_string(dex, FETCH(1))); NEXT(2);
+    case 0x1b: op_0x1b: WL(regs, AA, const_string(dex, FETCH(1) | (uint32_t)FETCH(2) << 16)); NEXT(3);
+    case 0x1c: op_0x1c: WL(regs, AA, resolve_type(dex, FETCH(1))->mirror); NEXT(2);
+    case 0x1d: op_0x1d: { jobj *o = RL(regs, AA); THROW_IF(!o && !dvm_throw("java/lang/NullPointerException", "monitor-enter on null")); dvm_monitor_enter(o); NEXT(1); }
+    case 0x1e: op_0x1e: { jobj *o = RL(regs, AA); THROW_IF(!o && !dvm_throw("java/lang/NullPointerException", "monitor-exit on null")); dvm_monitor_exit(o); NEXT(1); }
+    case 0x1f: op_0x1f: {                                                   /* check-cast */
         jobj *o = RL(regs, AA);
         if (o) {
             tl_jclass *c = resolve_type(dex, FETCH(1));
@@ -1693,14 +1703,14 @@ dispatch:;
         }
         NEXT(2);
     }
-    case 0x20: WI(regs, A4, dvm_instance_of(RL(regs, B4), resolve_type(dex, FETCH(1)))); NEXT(2);
-    case 0x21: {
+    case 0x20: op_0x20: WI(regs, A4, dvm_instance_of(RL(regs, B4), resolve_type(dex, FETCH(1)))); NEXT(2);
+    case 0x21: op_0x21: {
         jobj *a = RL(regs, B4);
         THROW_IF(!a && !dvm_throw("java/lang/NullPointerException", "Attempt to get length of null array"));
         WI(regs, A4, (int32_t)(a->kind == TL_K_OBJ_ARRAY ? a->oarr.len : a->arr.len));
         NEXT(1);
     }
-    case 0x22: {                                                   /* new-instance */
+    case 0x22: op_0x22: {                                                   /* new-instance */
         tl_jclass *c = resolve_type(dex, FETCH(1));
         dvm_class *dc = dvm_class_of(c);
         if (!dc && class_missing(c)) { throw_missing(c); goto exception; }
@@ -1710,7 +1720,7 @@ dispatch:;
         WL(regs, AA, o);
         NEXT(2);
     }
-    case 0x23: {                                                   /* new-array */
+    case 0x23: op_0x23: {                                                   /* new-array */
         int32_t n = RI(regs, B4);
         THROW_IF(n < 0 && !dvm_throw("java/lang/NegativeArraySizeException", "%d", n));
         tl_jclass *ac = resolve_type(dex, FETCH(1));
@@ -1724,7 +1734,7 @@ dispatch:;
         WL(regs, A4, new_array(ac, n));
         NEXT(2);
     }
-    case 0x24: case 0x25: {                                        /* filled-new-array(/range) */
+    case 0x24: op_0x24: case 0x25: op_0x25: {                                        /* filled-new-array(/range) */
         bool range = (w & 0xFF) == 0x25;
         int count = range ? AA : B4;
         tl_jclass *ac = resolve_type(dex, FETCH(1));
@@ -1738,7 +1748,7 @@ dispatch:;
         result.l = a;
         NEXT(3);
     }
-    case 0x26: {                                                   /* fill-array-data */
+    case 0x26: op_0x26: {                                                   /* fill-array-data */
         jobj *a = RL(regs, AA);
         THROW_IF(!a && !dvm_throw("java/lang/NullPointerException", "fill-array-data on null"));
         int32_t off = (int32_t)(FETCH(1) | (uint32_t)FETCH(2) << 16);
@@ -1748,15 +1758,15 @@ dispatch:;
         memcpy(a->arr.data, p + 4, (size_t)width * n);
         NEXT(3);
     }
-    case 0x27: {
+    case 0x27: op_0x27: {
         jobj *e = RL(regs, AA);
         if (!e) dvm_throw("java/lang/NullPointerException", "throw with null exception"); else tl_jni_set_pending(e);
         goto exception;
     }
-    case 0x28: pc += (int8_t)AA; goto dispatch;
-    case 0x29: pc += (int16_t)FETCH(1); goto dispatch;
-    case 0x2a: pc += (int32_t)(FETCH(1) | (uint32_t)FETCH(2) << 16); goto dispatch;
-    case 0x2b: {                                                   /* packed-switch */
+    case 0x28: op_0x28: pc += (int8_t)AA; goto dispatch;
+    case 0x29: op_0x29: pc += (int16_t)FETCH(1); goto dispatch;
+    case 0x2a: op_0x2a: pc += (int32_t)(FETCH(1) | (uint32_t)FETCH(2) << 16); goto dispatch;
+    case 0x2b: op_0x2b: {                                                   /* packed-switch */
         const uint16_t *p = insns + pc + (int32_t)(FETCH(1) | (uint32_t)FETCH(2) << 16);
         uint16_t size = p[1]; int32_t first = (int32_t)(p[2] | (uint32_t)p[3] << 16);
         int32_t v = RI(regs, AA);
@@ -1764,7 +1774,7 @@ dispatch:;
         if (i >= 0 && i < size) { const uint16_t *t = p + 4 + 2 * i; pc += (int32_t)(t[0] | (uint32_t)t[1] << 16); goto dispatch; }
         NEXT(3);
     }
-    case 0x2c: {                                                   /* sparse-switch */
+    case 0x2c: op_0x2c: {                                                   /* sparse-switch */
         const uint16_t *p = insns + pc + (int32_t)(FETCH(1) | (uint32_t)FETCH(2) << 16);
         uint16_t size = p[1];
         int32_t v = RI(regs, AA);
@@ -1776,16 +1786,16 @@ dispatch:;
         }
         NEXT(3);
     }
-    case 0x2d: case 0x2e: {                                        /* cmpl-float, cmpg-float */
+    case 0x2d: op_0x2d: case 0x2e: op_0x2e: {                                        /* cmpl-float, cmpg-float */
         float a = RF(regs, FETCH(1) & 0xFF), b = RF(regs, FETCH(1) >> 8);
         WI(regs, AA, a < b ? -1 : a > b ? 1 : a == b ? 0 : ((w & 0xFF) == 0x2d ? -1 : 1)); NEXT(2);
     }
-    case 0x2f: case 0x30: {
+    case 0x2f: op_0x2f: case 0x30: op_0x30: {
         double a = RD(regs, FETCH(1) & 0xFF), b = RD(regs, FETCH(1) >> 8);
         WI(regs, AA, a < b ? -1 : a > b ? 1 : a == b ? 0 : ((w & 0xFF) == 0x2f ? -1 : 1)); NEXT(2);
     }
-    case 0x31: { int64_t a = RJ(regs, FETCH(1) & 0xFF), b = RJ(regs, FETCH(1) >> 8); WI(regs, AA, a < b ? -1 : a > b); NEXT(2); }
-#define IFCMP(op, cond) case op: if (cond) { pc += (int16_t)FETCH(1); goto dispatch; } NEXT(2);
+    case 0x31: op_0x31: { int64_t a = RJ(regs, FETCH(1) & 0xFF), b = RJ(regs, FETCH(1) >> 8); WI(regs, AA, a < b ? -1 : a > b); NEXT(2); }
+#define IFCMP(op, cond) case op: op_##op: if (cond) { pc += (int16_t)FETCH(1); goto dispatch; } NEXT(2);
     /* ints are kept zero-extended and references whole, so equality is the whole register either way */
     IFCMP(0x32, regs[A4] == regs[B4])
     IFCMP(0x33, regs[A4] != regs[B4])
@@ -1800,8 +1810,8 @@ dispatch:;
     IFCMP(0x3c, RI(regs, AA) > 0)
     IFCMP(0x3d, RI(regs, AA) <= 0)
 #undef IFCMP
-    case 0x44: case 0x45: case 0x46: case 0x47: case 0x48: case 0x49: case 0x4a:     /* aget* */
-    case 0x4b: case 0x4c: case 0x4d: case 0x4e: case 0x4f: case 0x50: case 0x51: {   /* aput* */
+    case 0x44: op_0x44: case 0x45: op_0x45: case 0x46: op_0x46: case 0x47: op_0x47: case 0x48: op_0x48: case 0x49: op_0x49: case 0x4a: op_0x4a:     /* aget* */
+    case 0x4b: op_0x4b: case 0x4c: op_0x4c: case 0x4d: op_0x4d: case 0x4e: op_0x4e: case 0x4f: op_0x4f: case 0x50: op_0x50: case 0x51: op_0x51: {   /* aput* */
         uint16_t bc = FETCH(1);
         jobj *a = RL(regs, bc & 0xFF);
         int32_t i = RI(regs, bc >> 8);
@@ -1830,8 +1840,8 @@ dispatch:;
         }
         NEXT(2);
     }
-    case 0x52: case 0x53: case 0x54: case 0x55: case 0x56: case 0x57: case 0x58:     /* iget* */
-    case 0x59: case 0x5a: case 0x5b: case 0x5c: case 0x5d: case 0x5e: case 0x5f: {   /* iput* */
+    case 0x52: op_0x52: case 0x53: op_0x53: case 0x54: op_0x54: case 0x55: op_0x55: case 0x56: op_0x56: case 0x57: op_0x57: case 0x58: op_0x58:     /* iget* */
+    case 0x59: op_0x59: case 0x5a: op_0x5a: case 0x5b: op_0x5b: case 0x5c: op_0x5c: case 0x5d: op_0x5d: case 0x5e: op_0x5e: case 0x5f: op_0x5f: {   /* iput* */
         jobj *o = RL(regs, B4);
         fref *f = resolve_fref(dex, FETCH(1), false);
         bool put = (w & 0xFF) >= 0x59;
@@ -1864,8 +1874,8 @@ dispatch:;
         }
         NEXT(2);
     }
-    case 0x60: case 0x61: case 0x62: case 0x63: case 0x64: case 0x65: case 0x66:     /* sget* */
-    case 0x67: case 0x68: case 0x69: case 0x6a: case 0x6b: case 0x6c: case 0x6d: {   /* sput* */
+    case 0x60: op_0x60: case 0x61: op_0x61: case 0x62: op_0x62: case 0x63: op_0x63: case 0x64: op_0x64: case 0x65: op_0x65: case 0x66: op_0x66:     /* sget* */
+    case 0x67: op_0x67: case 0x68: op_0x68: case 0x69: op_0x69: case 0x6a: op_0x6a: case 0x6b: op_0x6b: case 0x6c: op_0x6c: case 0x6d: op_0x6d: {   /* sput* */
         fref *f = resolve_fref(dex, FETCH(1), true);
         if (f->missing) { throw_missing(f->cls); goto exception; }
         bool put = (w & 0xFF) >= 0x67;
@@ -1888,7 +1898,7 @@ dispatch:;
         }
         NEXT(2);
     }
-    case 0x6e: case 0x6f: case 0x70: case 0x71: case 0x72: {      /* invoke-kind */
+    case 0x6e: op_0x6e: case 0x6f: op_0x6f: case 0x70: op_0x70: case 0x71: op_0x71: case 0x72: op_0x72: {      /* invoke-kind */
         if (t_depth > 0 && t_depth <= 8192) t_pcs[t_depth - 1] = pc;
         uint16_t list = FETCH(2);
         uint16_t argregs[5] = { (uint16_t)(list & 0xF), (uint16_t)((list >> 4) & 0xF), (uint16_t)((list >> 8) & 0xF), (uint16_t)(list >> 12), (uint16_t)A4 };
@@ -1897,35 +1907,35 @@ dispatch:;
         normalize(((mref *)dex->mcache[FETCH(1)])->shorty[0], &result);
         NEXT(3);
     }
-    case 0x74: case 0x75: case 0x76: case 0x77: case 0x78: {      /* invoke-kind/range */
+    case 0x74: op_0x74: case 0x75: op_0x75: case 0x76: op_0x76: case 0x77: op_0x77: case 0x78: op_0x78: {      /* invoke-kind/range */
         if (t_depth > 0 && t_depth <= 8192) t_pcs[t_depth - 1] = pc;
         result.j = 0;
         if (!invoke_regs(m, (w & 0xFF) - 0x74, FETCH(1), AA, NULL, FETCH(2), true, regs, &result)) goto exception;
         normalize(((mref *)dex->mcache[FETCH(1)])->shorty[0], &result);
         NEXT(3);
     }
-    case 0x7b: WI(regs, A4, -RI(regs, B4)); NEXT(1);
-    case 0x7c: WI(regs, A4, ~RI(regs, B4)); NEXT(1);
-    case 0x7d: WJ(regs, A4, -RJ(regs, B4)); NEXT(1);
-    case 0x7e: WJ(regs, A4, ~RJ(regs, B4)); NEXT(1);
-    case 0x7f: WF(regs, A4, -RF(regs, B4)); NEXT(1);
-    case 0x80: WD(regs, A4, -RD(regs, B4)); NEXT(1);
-    case 0x81: WJ(regs, A4, RI(regs, B4)); NEXT(1);
-    case 0x82: WF(regs, A4, (float)RI(regs, B4)); NEXT(1);
-    case 0x83: WD(regs, A4, (double)RI(regs, B4)); NEXT(1);
-    case 0x84: WI(regs, A4, (int32_t)RJ(regs, B4)); NEXT(1);
-    case 0x85: WF(regs, A4, (float)RJ(regs, B4)); NEXT(1);
-    case 0x86: WD(regs, A4, (double)RJ(regs, B4)); NEXT(1);
-    case 0x87: WI(regs, A4, f2i(RF(regs, B4))); NEXT(1);
-    case 0x88: WJ(regs, A4, f2l(RF(regs, B4))); NEXT(1);
-    case 0x89: WD(regs, A4, (double)RF(regs, B4)); NEXT(1);
-    case 0x8a: WI(regs, A4, d2i(RD(regs, B4))); NEXT(1);
-    case 0x8b: WJ(regs, A4, f2l(RD(regs, B4))); NEXT(1);
-    case 0x8c: WF(regs, A4, (float)RD(regs, B4)); NEXT(1);
-    case 0x8d: WI(regs, A4, (int8_t)RI(regs, B4)); NEXT(1);
-    case 0x8e: WI(regs, A4, (uint16_t)RI(regs, B4)); NEXT(1);
-    case 0x8f: WI(regs, A4, (int16_t)RI(regs, B4)); NEXT(1);
-    default: break;
+    case 0x7b: op_0x7b: WI(regs, A4, -RI(regs, B4)); NEXT(1);
+    case 0x7c: op_0x7c: WI(regs, A4, ~RI(regs, B4)); NEXT(1);
+    case 0x7d: op_0x7d: WJ(regs, A4, -RJ(regs, B4)); NEXT(1);
+    case 0x7e: op_0x7e: WJ(regs, A4, ~RJ(regs, B4)); NEXT(1);
+    case 0x7f: op_0x7f: WF(regs, A4, -RF(regs, B4)); NEXT(1);
+    case 0x80: op_0x80: WD(regs, A4, -RD(regs, B4)); NEXT(1);
+    case 0x81: op_0x81: WJ(regs, A4, RI(regs, B4)); NEXT(1);
+    case 0x82: op_0x82: WF(regs, A4, (float)RI(regs, B4)); NEXT(1);
+    case 0x83: op_0x83: WD(regs, A4, (double)RI(regs, B4)); NEXT(1);
+    case 0x84: op_0x84: WI(regs, A4, (int32_t)RJ(regs, B4)); NEXT(1);
+    case 0x85: op_0x85: WF(regs, A4, (float)RJ(regs, B4)); NEXT(1);
+    case 0x86: op_0x86: WD(regs, A4, (double)RJ(regs, B4)); NEXT(1);
+    case 0x87: op_0x87: WI(regs, A4, f2i(RF(regs, B4))); NEXT(1);
+    case 0x88: op_0x88: WJ(regs, A4, f2l(RF(regs, B4))); NEXT(1);
+    case 0x89: op_0x89: WD(regs, A4, (double)RF(regs, B4)); NEXT(1);
+    case 0x8a: op_0x8a: WI(regs, A4, d2i(RD(regs, B4))); NEXT(1);
+    case 0x8b: op_0x8b: WJ(regs, A4, f2l(RD(regs, B4))); NEXT(1);
+    case 0x8c: op_0x8c: WF(regs, A4, (float)RD(regs, B4)); NEXT(1);
+    case 0x8d: op_0x8d: WI(regs, A4, (int8_t)RI(regs, B4)); NEXT(1);
+    case 0x8e: op_0x8e: WI(regs, A4, (uint16_t)RI(regs, B4)); NEXT(1);
+    case 0x8f: op_0x8f: WI(regs, A4, (int16_t)RI(regs, B4)); NEXT(1);
+    default: op_default: break;
     }
     /* binary operations: 23x (0x90-0xaf), 2addr (0xb0-0xcf), lit16 (0xd0-0xd7), lit8 (0xd8-0xe2) */
     {
