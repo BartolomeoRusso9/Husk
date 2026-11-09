@@ -6,8 +6,27 @@ public class NotificationManager {
     private final java.util.HashMap<String, NotificationChannel> mChannels = new java.util.HashMap<>();
     private final java.util.HashMap<String, NotificationChannelGroup> mGroups = new java.util.HashMap<>();
     public void notify(int id, Notification n) { notify(null, id, n); }
-    public void notify(String tag, int id, Notification n) { android.util.Log.i("Husk", "notification " + id + ": " + (n != null ? n.huskText() : "")); }
-    public void cancel(int id) {} public void cancel(String tag, int id) {} public void cancelAll() {}
+    /* An Android notification is an iOS one: its title and text (the big text when there is one), under a key of its tag and id so
+       the same notification posted again replaces it, and cancelling it removes it. Progress notifications (a download's) are not
+       shown: iOS has no place for them. */
+    public void notify(String tag, int id, Notification n) {
+        if (n == null) return;
+        android.util.Log.i("Husk", "notification " + id + ": " + n.huskText());
+        android.os.Bundle x = n.extras;
+        CharSequence title = x != null ? x.getCharSequence(Notification.EXTRA_TITLE) : null;
+        CharSequence text = x != null ? x.getCharSequence(Notification.EXTRA_BIG_TEXT) : null;
+        if (text == null && x != null) text = x.getCharSequence(Notification.EXTRA_TEXT);
+        if (text == null) text = n.tickerText;
+        if (title == null && text == null) return;
+        if (x != null && x.getInt(Notification.EXTRA_PROGRESS_MAX, 0) > 0) return;
+        if ((n.flags & Notification.FLAG_ONGOING_EVENT) != 0) return;      /* a foreground service's: it stays as long as the service */
+        try { husk.Native.notify(key(tag, id), title != null ? title.toString() : "", text != null ? text.toString() : ""); }
+        catch (Throwable t) { android.util.Log.w("Husk", "notification not shown", t); }
+    }
+    private static String key(String tag, int id) { return (tag != null ? tag : "") + ":" + id; }
+    public void cancel(int id) { cancel(null, id); }
+    public void cancel(String tag, int id) { try { husk.Native.notifyCancel(key(tag, id)); } catch (Throwable t) {} }
+    public void cancelAll() { try { husk.Native.notifyCancel(null); } catch (Throwable t) {} }
     public void createNotificationChannel(NotificationChannel c) { mChannels.put(c.getId(), c); }
     public void createNotificationChannels(java.util.List<NotificationChannel> l) { for (NotificationChannel c : l) createNotificationChannel(c); }
     public void createNotificationChannelGroup(NotificationChannelGroup g) { mGroups.put(g.getId(), g); }

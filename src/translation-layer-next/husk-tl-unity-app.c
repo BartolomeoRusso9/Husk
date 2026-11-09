@@ -63,7 +63,12 @@ static struct {
     void (*share)(const char *utf8);
     void (*orientation)(int android_orientation);
     void (*pick_documents)(const char *mime_types, int multiple);
+    void (*share_files)(const char *text, const char *const *paths, int n);
+    void (*notify)(const char *key, const char *title, const char *text);
+    void (*notify_cancel)(const char *key);
+    void (*save_media)(const char *path, const char *mime);
 } g_java_host;
+extern void (*tl_cocos_open_url_hook)(const char *url);
 
 static unsigned long engine_frames(void);
 
@@ -361,6 +366,9 @@ static void *launch_thread(void *arg)
                 .framework_res = fwres, .show_keyboard = g_java_host.keyboard, .set_clipboard = g_java_host.set_clipboard,
                 .get_clipboard = g_java_host.get_clipboard, .share = g_java_host.share, .set_orientation = g_java_host.orientation,
                 .pick_documents = g_java_host.pick_documents,
+                /* links, tel:, mailto:, maps: the iPhone opens them (the host's handler, the one cocos2d-x games use) */
+                .open_url = tl_cocos_open_url_hook,
+                .share_files = g_java_host.share_files, .notify = g_java_host.notify, .notify_cancel = g_java_host.notify_cancel, .save_media = g_java_host.save_media,
                 .insets = { g_java_insets[0], g_java_insets[1], g_java_insets[2], g_java_insets[3] }, .night_mode = g_java_night,
             };
             ok = tl_javaapp_start(&cfg);
@@ -567,6 +575,18 @@ void husk_java_insert_text(const char *utf8) { if (java_running()) tl_javaapp_te
 void husk_java_delete_backward(void) { if (java_running()) tl_javaapp_text_delete(); }
 void husk_java_text_action(void) { if (java_running()) tl_javaapp_text_action(); }
 void husk_java_set_document_picker(void (*pick)(const char *mime_types, int multiple)) { g_java_host.pick_documents = pick; }
+void husk_java_set_bridge(void (*share_files)(const char *text, const char *const *paths, int n),
+                          void (*notify)(const char *key, const char *title, const char *text), void (*notify_cancel)(const char *key))
+{
+    g_java_host.share_files = share_files; g_java_host.notify = notify; g_java_host.notify_cancel = notify_cancel;
+}
+void husk_java_set_media_saver(void (*save)(const char *path, const char *mime)) { g_java_host.save_media = save; }
+bool husk_java_incoming(const char *mime, const char *text_or_path, int is_file)
+{
+    if (!java_running()) return false;
+    tl_javaapp_incoming(mime, text_or_path, is_file != 0);
+    return true;
+}
 void husk_java_documents_picked(const char *const *paths, int n) { if (java_running()) tl_javaapp_documents_picked(paths, n); }
 void husk_java_keyboard_closed(void) { if (java_running()) tl_javaapp_keyboard_closed(); }
 void husk_java_back(void) { if (atomic_load(&A.state) == HUSK_UNITY_RUNNING && A.engine == ENGINE_JAVA) tl_javaapp_back(); }

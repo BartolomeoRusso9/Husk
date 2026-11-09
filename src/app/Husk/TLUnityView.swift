@@ -506,6 +506,12 @@ final class TLUnityUIView: UIView, UIKeyInput {
     /// A Java app's views (Husk's framework): a focused text field asks for the keyboard with Android's EditorInfo input type and
     /// IME options; the clipboard is the iPhone's; sharing opens the share sheet.
     static func installJavaHandlers() {
+        // Links, tel:, mailto: and geo: open in the iPhone's apps; notifications and shared files cross over (JavaBridge).
+        husk_cocos_set_open_url_handler { url in
+            guard let url, let link = JavaBridge.iosURL(String(cString: url)) else { return }
+            DispatchQueue.main.async { UIApplication.shared.open(link) }
+        }
+        JavaBridge.install()
         husk_java_set_host({ show, inputType, imeOptions in
             DispatchQueue.main.async {
                 guard let view = TLUnityUIView.cocosView, view.engine == .java else { return }
@@ -609,8 +615,9 @@ final class TLUnityUIView: UIView, UIKeyInput {
     /// The game's own requests, from its GL thread: 0 toggles, 1 shows, 2 hides.
     static func installKeyboardHandler() {
         // A link in the game (terms of use, the social buttons) opens in the browser.
+        // tel:, mailto: and geo: from a Java app open in Phone, Mail and Maps (JavaBridge.iosURL).
         husk_cocos_set_open_url_handler { url in
-            guard let url, let link = URL(string: String(cString: url)) else { return }
+            guard let url, let link = JavaBridge.iosURL(String(cString: url)) else { return }
             DispatchQueue.main.async { UIApplication.shared.open(link) }
         }
         husk_cocos_set_keyboard_handler { action in

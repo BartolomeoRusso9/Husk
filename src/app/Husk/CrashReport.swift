@@ -61,7 +61,8 @@ final class CrashReport: ObservableObject {
 
     // MARK: the note
 
-    private static var running: TLApp?
+    /// The app running now (the Android bridge names it in notifications and hands it what other apps share).
+    private(set) static var running: TLApp?
     private static var observers: [NSObjectProtocol] = []
 
     /// A game is starting: if Husk ends before `gameEnded`, the next launch will say so.

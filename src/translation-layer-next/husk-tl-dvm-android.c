@@ -397,6 +397,16 @@ static void text_push(const char *kind, const char *utf8)
     tl_javaapp_touch(7, 0, 0, 0);
 }
 void tl_javaapp_text(const char *utf8) { if (utf8 && *utf8) text_push("t", utf8); }
+/* "s" + kind ('t' text, 'f' file) + mime + '\n' + the text or the path: InputMethods hands it to AppRunner.incoming */
+void tl_javaapp_incoming(const char *mime, const char *payload, bool is_file)
+{
+    if (!payload) return;
+    size_t l = strlen(mime ? mime : "") + strlen(payload) + 4;
+    char *e = malloc(l);
+    snprintf(e, l, "%c%s\n%s", is_file ? 'f' : 't', mime ? mime : "", payload);
+    text_push("s", e);
+    free(e);
+}
 void tl_javaapp_text_delete(void) { text_push("d", NULL); }
 void tl_javaapp_text_action(void) { text_push("e", NULL); }
 void tl_javaapp_keyboard_closed(void) { text_push("h", NULL); }
@@ -435,6 +445,35 @@ NAT(N_getClipboard)
     free(t);
     return true;
 }
+NAT(N_shareFiles)
+{
+    (void)self; (void)ret;
+    const char *text = tl_jni_string(a[0].l);
+    jobj *arr = a[1].l;
+    int n = arr && arr->kind == TL_K_OBJ_ARRAY ? (int)arr->oarr.len : 0;
+    const char *paths[64]; int m = 0;
+    for (int i = 0; i < n && m < 64; i++) { const char *p = tl_jni_string(arr->oarr.v[i]); if (p) paths[m++] = p; }
+    tl_log_line("javaapp: share %d file(s)%s", m, text ? " with text" : "");
+    if (A.cfg.share_files && (m || text)) A.cfg.share_files(text, paths, m);
+    return true;
+}
+NAT(N_notify)
+{
+    (void)self; (void)ret;
+    const char *key = tl_jni_string(a[0].l), *title = tl_jni_string(a[1].l), *text = tl_jni_string(a[2].l);
+    tl_log_line("javaapp: notification %s: %.80s / %.80s", key ? key : "?", title ? title : "", text ? text : "");
+    if (A.cfg.notify && key) A.cfg.notify(key, title ? title : "", text ? text : "");
+    return true;
+}
+NAT(N_saveMedia)
+{
+    (void)self; (void)ret;
+    const char *path = tl_jni_string(a[0].l), *mime = tl_jni_string(a[1].l);
+    tl_log_line("javaapp: saved to the gallery: %s (%s)", path ? path : "?", mime ? mime : "?");
+    if (A.cfg.save_media && path) A.cfg.save_media(path, mime ? mime : "");
+    return true;
+}
+NAT(N_notifyCancel) { (void)self; (void)ret; if (A.cfg.notify_cancel) A.cfg.notify_cancel(tl_jni_string(a[0].l)); return true; }
 NAT(N_share) { (void)self; (void)ret; const char *t = tl_jni_string(a[0].l); tl_log_line("javaapp: share %.80s", t ? t : ""); if (A.cfg.share && t) A.cfg.share(t); return true; }
 NAT(N_pickDocuments)
 {
@@ -517,6 +556,10 @@ static const struct { const char *name, *sig; dvm_native_fn fn; } k_native[] = {
     { "setClipboard", "(Ljava/lang/String;)V", N_setClipboard },
     { "getClipboard", "()Ljava/lang/String;", N_getClipboard },
     { "share", "(Ljava/lang/String;)V", N_share },
+    { "shareFiles", "(Ljava/lang/String;[Ljava/lang/String;)V", N_shareFiles },
+    { "saveMedia", "(Ljava/lang/String;Ljava/lang/String;)V", N_saveMedia },
+    { "notify", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", N_notify },
+    { "notifyCancel", "(Ljava/lang/String;)V", N_notifyCancel },
     { "pickDocuments", "(Ljava/lang/String;Z)V", N_pickDocuments },
     { "setOrientation", "(I)V", N_setOrientation },
     { "insets", "()[I", N_insets },

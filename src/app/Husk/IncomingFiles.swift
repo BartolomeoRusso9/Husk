@@ -37,6 +37,8 @@ final class IncomingFiles: ObservableObject {
     /// A URL iOS opened Husk with. Anything that is not an APK or a bundle of them is left alone (husk:// links are not files).
     func receive(_ url: URL) {
         if url.isFileURL, url.pathExtension.lowercased() == "pkg" { installPS4Packages([url]); return }
+        // anything else another app shared with Husk (a picture, a PDF, a text): for the Android app running in Husk
+        if url.isFileURL, !Self.extensions.contains(url.pathExtension.lowercased()) { JavaBridge.receive(url); return }
         guard url.isFileURL, Self.extensions.contains(url.pathExtension.lowercased()) else { return }
         take([url]) { copies in
             self.gathering += copies

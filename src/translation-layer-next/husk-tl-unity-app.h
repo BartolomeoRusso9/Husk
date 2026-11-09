@@ -90,6 +90,13 @@ void husk_java_keyboard_closed(void);
 /* The system's file picker for a Java app: the app asks with MIME types (comma-separated) and whether several files may be
    picked; the host shows its document picker and answers with the paths of copies it made in the app's folder (n = 0: cancelled). */
 void husk_java_set_document_picker(void (*pick)(const char *mime_types, int multiple));
+/* The bridge to the iPhone's apps (JavaBridge.swift): files the app shares, and its notifications (cancel with NULL: all). */
+/* Photos and videos an Android app saves to its gallery (MediaStore), handed over to be added to the iPhone's Photos. */
+void husk_java_set_media_saver(void (*save)(const char *path, const char *mime));
+void husk_java_set_bridge(void (*share_files)(const char *text, const char *const *paths, int n),
+                          void (*notify)(const char *key, const char *title, const char *text), void (*notify_cancel)(const char *key));
+/* What an iPhone app shared, to the running Java app: text, or a file's path (is_file). False when no Java app runs. */
+bool husk_java_incoming(const char *mime, const char *text_or_path, int is_file);
 void husk_java_documents_picked(const char *const *paths, int n);
 void husk_java_key(int android_keycode, int down);
 /* A Java app's WebViews are WKWebViews in a container the host puts right under the app's screen view, the same size, at the screen's

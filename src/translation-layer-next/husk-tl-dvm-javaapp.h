@@ -34,6 +34,13 @@ typedef struct tl_javaapp_config {
     /* the system's file picker: MIME types comma-separated, as the intent gives them (any type, images, "application/pdf"); the host shows its document
        picker, copies what was picked into the app's folder and answers with tl_javaapp_documents_picked */
     void (*pick_documents)(const char *mime_types, int multiple);
+    /* the iPhone's side of Android's intents and notifications: files an app shares (ACTION_SEND with EXTRA_STREAM, copied to
+       paths the host can read), and its notifications (key: tag:id; NULL key on cancel: all of them) */
+    void (*share_files)(const char *text, const char *const *paths, int n);
+    void (*notify)(const char *key, const char *title, const char *text);
+    void (*notify_cancel)(const char *key);
+    /* a photo or video the app saved to the gallery (MediaStore): into the iPhone's Photos */
+    void (*save_media)(const char *path, const char *mime);
     int insets[4];                   /* left, top, right, bottom: the screen's notch and home indicator, in pixels */
     bool night_mode;                 /* the phone is in dark mode: the app's configuration says UI_MODE_NIGHT_YES */
 } tl_javaapp_config;
@@ -43,6 +50,10 @@ bool tl_javaapp_start(const tl_javaapp_config *cfg);
 void tl_javaapp_touch(int phase, int id, float x, float y);    /* surface pixels; phase 0 down, 1 move, 2 up, 3 cancel */
 void tl_javaapp_key(int android_keycode, bool down);
 void tl_javaapp_back(void);
+/* Something an iPhone app shared with this one: text (a link, a message) or a file at path, with its MIME type. */
+void tl_javaapp_incoming(const char *mime, const char *text_or_path, bool is_file);
+/* The screen's refresh rate in Hz (60, or 120 with ProMotion): what frames are paced and presented at. */
+void tl_javaapp_set_refresh(int hz);
 void tl_javaapp_set_paused(bool paused);
 /* The host keyboard's typing, to the focused text field: text, one delete before the cursor, the editor action (return), the
    keyboard closed by the host. */

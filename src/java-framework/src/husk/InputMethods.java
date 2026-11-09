@@ -49,6 +49,7 @@ public final class InputMethods {
             char k = it.charAt(0);
             if (k == 'h') { sShown = false; continue; }           /* the host closed the keyboard */
             if (k == 'f' || k == 'F') { Documents.deliver(it); continue; }   /* the file picker's answer */
+            if (k == 's') { AppRunner.incoming(it.substring(1)); continue; }  /* shared from an iPhone app */
             if (sConn == null) { typeKeys(k, it); continue; }
             switch (k) {
             case 't': sConn.commitText(it.substring(1), 1); break;

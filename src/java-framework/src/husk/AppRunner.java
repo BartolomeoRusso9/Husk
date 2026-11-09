@@ -256,9 +256,8 @@ public final class AppRunner {
             Native.openUrl(s);
             return;
         }
-        if (Intent.ACTION_SEND.equals(action)) {
-            String text = i.getStringExtra(Intent.EXTRA_TEXT);
-            if (text != null) Native.share(text);
+        if (Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            share(i);
             return;
         }
         if (Documents.handles(i)) {
@@ -282,6 +281,84 @@ public final class AppRunner {
         }
         throw new ActivityNotFoundException("No Activity found to handle " + i);
     }
+    /** ACTION_SEND / SEND_MULTIPLE to the iPhone's share sheet: the text, and the files (EXTRA_STREAM), copied out of the app's
+     *  content providers into files the host can hand over. */
+    private static void share(Intent i) {
+        CharSequence cs = i.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        String text = cs != null ? cs.toString() : null;
+        String subject = i.getStringExtra(Intent.EXTRA_SUBJECT);
+        if (text == null && subject != null) text = subject;
+        java.util.ArrayList<android.net.Uri> uris = new java.util.ArrayList<>();
+        try {
+            if (Intent.ACTION_SEND_MULTIPLE.equals(i.getAction())) {
+                java.util.ArrayList<android.net.Uri> l = i.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+                if (l != null) uris.addAll(l);
+            } else {
+                android.net.Uri u = i.getParcelableExtra(Intent.EXTRA_STREAM);
+                if (u != null) uris.add(u);
+            }
+        } catch (RuntimeException e) { android.util.Log.w("Husk", "share: no stream", e); }
+        if (uris.isEmpty()) { if (text != null) Native.share(text); return; }
+        java.util.ArrayList<String> paths = new java.util.ArrayList<>();
+        java.io.File dir = new java.io.File(sApp.getCacheDir(), "husk-share/" + System.currentTimeMillis());
+        dir.mkdirs();
+        for (int k = 0; k < uris.size(); k++) {
+            android.net.Uri u = uris.get(k);
+            String name = displayName(u, k, i.getType());
+            java.io.File out = new java.io.File(dir, name);
+            try (java.io.InputStream in = sApp.getContentResolver().openInputStream(u); java.io.FileOutputStream os = new java.io.FileOutputStream(out)) {
+                if (in == null) continue;
+                byte[] buf = new byte[65536];
+                for (int n; (n = in.read(buf)) > 0; ) os.write(buf, 0, n);
+                paths.add(out.getAbsolutePath());
+            } catch (Exception e) { android.util.Log.w("Husk", "share: could not read " + u, e); }
+        }
+        if (paths.isEmpty() && text == null) return;
+        Native.shareFiles(text, paths.toArray(new String[0]));
+    }
+    /** A shared file's name: the provider's DISPLAY_NAME, else the URI's last segment, else one from its type. */
+    private static String displayName(android.net.Uri u, int k, String type) {
+        String name = null;
+        try (android.database.Cursor c = sApp.getContentResolver().query(u, new String[] { android.provider.OpenableColumns.DISPLAY_NAME }, null, null, null)) {
+            if (c != null && c.moveToFirst()) name = c.getString(0);
+        } catch (Exception e) { /* not a provider that answers queries */ }
+        if (name == null) name = u.getLastPathSegment();
+        if (name == null || name.isEmpty()) name = "shared-" + k;
+        name = name.replace('/', '_');
+        if (name.indexOf('.') < 0 && type != null) {
+            String ext = android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(type);
+            if (ext != null) name += "." + ext;
+        }
+        return name;
+    }
+
+    /** From an iPhone app's share sheet ("t" or "f", the MIME type, a newline, then the text or a file's path): ACTION_SEND to the
+     *  activity of this app that takes it, as Android's share sheet would start it. */
+    static void incoming(String e) {
+        if (e.length() < 2) return;
+        boolean file = e.charAt(0) == 'f';
+        int nl = e.indexOf('\n');
+        if (nl < 0) return;
+        String mime = e.substring(1, nl), payload = e.substring(nl + 1);
+        if (mime.isEmpty()) mime = file ? "application/octet-stream" : "text/plain";
+        Intent i = new Intent(Intent.ACTION_SEND);
+        i.setType(mime);
+        if (file) {
+            android.net.Uri u = android.net.Uri.fromFile(new java.io.File(payload));
+            i.putExtra(Intent.EXTRA_STREAM, u);
+            i.setClipData(android.content.ClipData.newRawUri(null, u));
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } else i.putExtra(Intent.EXTRA_TEXT, payload);
+        Manifest.Component c = Manifest.resolve(i);
+        android.util.Log.i("Husk", "shared from the iPhone: " + mime + (c != null ? " -> " + c.name : " (no activity of this app takes it)"));
+        if (c == null) {
+            Activity a = top();
+            if (a != null) android.widget.Toast.makeText(a, "This app can't receive what was shared", android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
+        startActivity(top() != null ? top() : sApp, i, -1, null);
+    }
+
     /** Activity.finish: the one below comes back (with the result when it asked for one). */
     public static void finish(Activity a) { sHandler.post(() -> finishNow(a, true)); }
     private static void finishNow(Activity a, boolean resumeBelow) {

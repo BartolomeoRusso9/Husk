@@ -26,6 +26,15 @@ public final class Native {
     public static native String externalDir();
     public static native String packageName();
     public static native int screenWidth();
+    /** The screen's refresh rate: 120 on a ProMotion iPhone, else 60. */
+    public static native int refreshRate();
+    /** The iPhone's share sheet with these files (and text, or null). */
+    public static native void shareFiles(String text, String[] paths);
+    /** A photo or video saved to the gallery (husk.MediaProvider): added to the iPhone's Photos. */
+    public static native void saveMedia(String path, String mime);
+    /** An iOS notification for the app's notification key (tag:id); cancelling a null key cancels all of them. */
+    public static native void notify(String key, String title, String text);
+    public static native void notifyCancel(String key);
     public static native int screenHeight();
     public static native float density();
     public static native void startGL(Object view, Object renderer, int esVersion);
