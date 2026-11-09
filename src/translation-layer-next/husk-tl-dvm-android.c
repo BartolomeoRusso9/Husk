@@ -268,6 +268,11 @@ NAT(N_assetLength) { (void)self; const tl_zip_entry *e = asset_find(tl_jni_strin
 NAT(N_dataDir) { (void)self; (void)a; *ret = L(jstr(A.data)); return true; }
 NAT(N_externalDir) { (void)self; (void)a; *ret = L(jstr(A.ext)); return true; }
 NAT(N_packageName) { (void)self; (void)a; *ret = L(jstr(A.pkg)); return true; }
+/* The screen's refresh rate: 120 on a ProMotion iPhone, else 60. Choreographer paces the app's frames by it, and the render thread
+ * presents at it (husk_java_set_refresh, from the screen's maximumFramesPerSecond). */
+static _Atomic int g_refresh_hz = 60;
+void tl_javaapp_set_refresh(int hz) { atomic_store(&g_refresh_hz, hz >= 30 && hz <= 240 ? hz : 60); }
+NAT(N_refreshRate) { (void)self; (void)a; *ret = I(atomic_load(&g_refresh_hz)); return true; }
 NAT(N_screenWidth) { (void)self; (void)a; *ret = I(A.cfg.width); return true; }
 NAT(N_screenHeight) { (void)self; (void)a; *ret = I(A.cfg.height); return true; }
 NAT(N_density) { (void)self; (void)a; *ret = F(A.cfg.density > 0 ? A.cfg.density : 3.0f); return true; }
@@ -487,6 +492,7 @@ static const struct { const char *name, *sig; dvm_native_fn fn; } k_native[] = {
     { "externalDir", "()Ljava/lang/String;", N_externalDir },
     { "packageName", "()Ljava/lang/String;", N_packageName },
     { "screenWidth", "()I", N_screenWidth },
+    { "refreshRate", "()I", N_refreshRate },
     { "screenHeight", "()I", N_screenHeight },
     { "density", "()F", N_density },
     { "startGL", "(Ljava/lang/Object;Ljava/lang/Object;I)V", N_startGL },
@@ -572,6 +578,7 @@ static void log_pending(const char *where)
 
 bool tl_ui_frame_take(const uint8_t **px, int *w, int *h, bool *any);
 void tl_ui_frame_done(void);
+void tl_ui_frame_rows(int *y0, int *y1);
 bool tl_ui_has_frame(void);
 
 typedef struct {
@@ -617,7 +624,11 @@ static void ov_init_flip(overlay *o, bool bottom_up)
 }
 static void ov_init(overlay *o) { ov_init_flip(o, false); }
 
-static void ov_upload(overlay *o, const uint8_t *px, int w, int h)
+static void ov_upload_rows(overlay *o, const uint8_t *px, int w, int h, int y0, int y1);
+static void ov_upload(overlay *o, const uint8_t *px, int w, int h) { ov_upload_rows(o, px, w, h, 0, h); }
+/* Rows y0..y1 of the frame (all of them when the texture is new or a different size): the frame is whole rows, so the part is one
+ * contiguous block, and no unpack row length is needed. */
+static void ov_upload_rows(overlay *o, const uint8_t *px, int w, int h, int y0, int y1)
 {
     void (*bindTex)(uint32_t, uint32_t) = gl_fn("glBindTexture");
     void (*texParam)(uint32_t, uint32_t, int32_t) = gl_fn("glTexParameteri");
@@ -633,7 +644,10 @@ static void ov_upload(overlay *o, const uint8_t *px, int w, int h)
         texParam(0x0DE1, 0x2802, 0x812F); texParam(0x0DE1, 0x2803, 0x812F);
         texImage(0x0DE1, 0, 0x1908, w, h, 0, 0x1908, 0x1401, px);
         o->tw = w; o->th = h;
-    } else texSub(0x0DE1, 0, 0, 0, w, h, 0x1908, 0x1401, px);
+    } else {
+        if (y0 < 0 || y0 >= y1 || y1 > h) { y0 = 0; y1 = h; }
+        texSub(0x0DE1, 0, 0, y0, w, y1 - y0, 0x1908, 0x1401, px + (size_t)y0 * w * 4);
+    }
 }
 
 static void ov_draw(overlay *o, int vw, int vh)
@@ -977,7 +991,8 @@ static void *gl_main(void *arg)
         bool fresh = tl_ui_frame_take(&px, &fw, &fh, &any);
         if (fresh) {
             makeCurrent(dpy, surf, surf, ui);
-            if (any) ov_upload(&ov, px, fw, fh);
+            int y0, y1; tl_ui_frame_rows(&y0, &y1);
+            if (any) ov_upload_rows(&ov, px, fw, fh, y0, y1);
             else ov.tw = ov.th = 0;
             tl_ui_frame_done();
         }
@@ -1013,7 +1028,7 @@ static void *gl_main(void *arg)
             swapBuffers(dpy, surf);
             atomic_fetch_add(&A.frames, 1);
         }
-        next += 1000000000ll / 60;
+        next += 1000000000ll / atomic_load(&g_refresh_hz);
         int64_t late = now_ns() - next;
         if (late > 100000000ll) next = now_ns();
         else if (late < 0) { struct timespec ts = { 0, (long)(-late) }; nanosleep(&ts, NULL); }

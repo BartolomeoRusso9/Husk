@@ -971,7 +971,19 @@ public class View implements Drawable.Callback, KeyEvent.Callback {
        override to invalidate their drawables (whose invalidateSelf comes back through invalidateDrawable) */
     private void invalidateHusk() {
         mPrivateFlags |= PFLAG_DIRTY;
-        if (mRoot != null) mRoot.invalidate();
+        if (mRoot == null) return;
+        /* only this view's rectangle is drawn again, when nothing can make what it draws reach past it: no transform or animation on it
+           or any parent, every parent clipping its children, no shadow. Otherwise, and when it moves (setFrame, offsets, setters of
+           alpha and transforms: invalidateParent), the whole screen. */
+        if (mAnimation != null || !hasIdentityMatrix() || getZ() != 0 || mParent == null) { mRoot.invalidate(); return; }
+        int l = mLeft, t = mTop;
+        for (ViewGroup p = mParent; ; p = p.mParent) {
+            if (((View) p).mAnimation != null || !p.hasIdentityMatrix() || !p.getClipChildren()) { mRoot.invalidate(); return; }
+            if (p.mParent == null) break;
+            l += p.mLeft - p.mScrollX; t += p.mTop - p.mScrollY;
+        }
+        /* the root view is at the window's origin, drawn without a scroll of its own (ViewRoot calls its draw directly) */
+        mRoot.invalidateRect(l, t, l + getWidth(), t + getHeight());
     }
     public void invalidate() { invalidateHusk(); }
     public void invalidate(Rect dirty) { invalidateHusk(); }
@@ -1024,6 +1036,10 @@ public class View implements Drawable.Callback, KeyEvent.Callback {
             else if (!a.getFillAfter()) { mAnimation = null; onAnimationEnd(); }
         }
         if (mVisibility != VISIBLE && !animating) return;
+        /* a child wholly outside what can be drawn -- scrolled off a list, below the screen -- is not drawn at all, as Android's
+           software renderer skips it (only when the parent clips its children and nothing transforms this one: then its bounds are
+           all it can touch). Every child of a long page was drawn each frame before, seen or not. */
+        if (mAnimation == null && parent.getClipChildren() && hasIdentityMatrix() && c.quickReject(mLeft, mTop, mRight, mBottom)) return;
         int save = c.save();
         c.translate(mLeft, mTop);
         if (!hasIdentityMatrix()) c.concat(getMatrix());

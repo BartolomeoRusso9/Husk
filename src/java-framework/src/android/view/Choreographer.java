@@ -9,7 +9,9 @@ import java.util.ArrayList;
 public final class Choreographer {
     public interface FrameCallback { void doFrame(long frameTimeNanos); }
     public static final int CALLBACK_INPUT = 0, CALLBACK_ANIMATION = 1, CALLBACK_INSETS_ANIMATION = 2, CALLBACK_TRAVERSAL = 3, CALLBACK_COMMIT = 4;
-    private static final long FRAME_NS = 16_666_667L;
+    /* one frame at the screen's rate: 8.3 ms on a 120 Hz iPhone */
+    private static final long FRAME_NS = 1_000_000_000L / Math.max(30, Math.min(240, refreshHz()));
+    private static int refreshHz() { try { return husk.Native.refreshRate(); } catch (Throwable t) { return 60; } }
     private static final ThreadLocal<Choreographer> sThread = new ThreadLocal<>();
     private static Choreographer sMain;
     private final Handler mHandler;
@@ -31,7 +33,7 @@ public final class Choreographer {
         return c;
     }
     public static Choreographer getMainThreadInstance() { if (sMain == null) sMain = new Choreographer(Looper.getMainLooper()); return sMain; }
-    public static long getFrameDelay() { return 16; }
+    public static long getFrameDelay() { return FRAME_NS / 1_000_000L; }
     public static void setFrameDelay(long d) {}
     public long getFrameTime() { return mLastFrameTimeNanos / 1_000_000L; }
     public long getFrameTimeNanos() { return mLastFrameTimeNanos; }

@@ -64,4 +64,8 @@ public final class Gfx {
 
     /** The window's views, drawn: Husk's render thread puts them on screen over the app's GL. 0: nothing to show. */
     public static native void present(long bm);
+    /** Only rows y0..y1 of the screen changed since the last frame. */
+    public static native void presentRows(long bm, int y0, int y1);
+    /** Fill the top {@code top} rows and the bottom {@code bottom} rows with the content's rows next to them (ViewRoot.drawAll). */
+    public static native void bmExtendEdges(long bm, int top, int bottom);
 }

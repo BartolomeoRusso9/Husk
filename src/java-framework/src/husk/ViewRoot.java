@@ -150,6 +150,11 @@ public final class ViewRoot implements ViewParent {
     public KeyEvent.DispatcherState keyDispatcherState() { return mKeyState; }
     public void keepScreenOn(boolean on) {}
     public void invalidate() { scheduleFrame(); }
+    /** Part of this window changed (window coordinates): only it is drawn again, unless something else asks for the whole screen. */
+    public void invalidateRect(int l, int t, int r, int b) {
+        if (!sFull) sDirty.union(l + mX, t + mY, r + mX, b + mY);
+        schedule();
+    }
     public void invalidateFromAnyThread() { if (Looper.myLooper() == Looper.getMainLooper()) scheduleFrame(); else mainHandler().post(ViewRoot::scheduleFrame); }
     public void requestLayout() { mLayoutRequested = true; scheduleFrame(); }
     public void requestApplyInsets() { mInsetsDirty = true; mLayoutRequested = true; scheduleFrame(); }
@@ -191,18 +196,43 @@ public final class ViewRoot implements ViewParent {
     static int screenH() { return Native.screenHeight(); }
 
     // ---- the frame
-    public static void scheduleFrame() {
+    /* What the next frame draws again: the whole screen (anything but a view's own invalidate: a layout, a window coming or going, a
+     * view moving, fading or turning), or the union of the rectangles views said changed, in screen pixels. */
+    private static boolean sFull = true;
+    private static final Rect sDirty = new Rect();
+    public static void scheduleFrame() { sFull = true; schedule(); }
+    private static void schedule() {
         if (sScheduled) return;
         sScheduled = true;
         Choreographer.getMainThreadInstance().postCallback(Choreographer.CALLBACK_TRAVERSAL, ViewRoot::doFrame, null);
     }
     private static void doFrame() {
         sScheduled = false;
+        long t0 = System.nanoTime();
         ArrayList<ViewRoot> roots = new ArrayList<>(sRoots);
-        for (ViewRoot r : roots) if (!r.mRemoved) r.performLayout();
+        for (ViewRoot r : roots) if (!r.mRemoved && r.performLayout()) sFull = true;
         for (ViewRoot r : roots) if (!r.mRemoved && r.mObserver.dispatchOnPreDraw()) { scheduleFrame(); }
+        long t1 = System.nanoTime();
         drawAll(roots);
+        long t2 = System.nanoTime();
         for (ViewRoot r : roots) if (!r.mRemoved) r.mObserver.dispatchOnDraw();
+        frameTimes(t1 - t0, t2 - t1, t0);
+    }
+
+    /* Where a frame's time goes, every 5 seconds while frames are drawn: laying out (and pre-draw listeners), and drawing the views
+     * (with the copy to the screen). How long the main thread spent between frames, on the app's own work, is the rest. */
+    private static long sStatFrames, sStatLayout, sStatDraw, sStatMax, sStatSince;
+    private static void frameTimes(long layout, long draw, long start) {
+        if (sStatSince == 0) sStatSince = start;
+        sStatFrames++; sStatLayout += layout; sStatDraw += draw;
+        sStatMax = Math.max(sStatMax, layout + draw);
+        long span = System.nanoTime() - sStatSince;
+        if (span < 5_000_000_000L) return;
+        android.util.Log.i("HuskFrames", String.format(java.util.Locale.ROOT,
+                "%.1f frames/s; per frame %.1f ms layout, %.1f ms draw, slowest %.1f ms (%dx%d)",
+                sStatFrames * 1e9 / span, sStatLayout / 1e6 / sStatFrames, sStatDraw / 1e6 / sStatFrames, sStatMax / 1e6, screenW(), screenH()));
+        sStatFrames = sStatLayout = sStatDraw = sStatMax = 0;
+        sStatSince = System.nanoTime();
     }
     private static Boolean sDump;
     private long mLastDump;
@@ -250,7 +280,8 @@ public final class ViewRoot implements ViewParent {
         android.util.Log.d("ViewDump", b.toString());
         if (v instanceof android.view.ViewGroup) { android.view.ViewGroup g = (android.view.ViewGroup) v; for (int i = 0; i < g.getChildCount(); i++) dump(g.getChildAt(i), depth + 1); }
     }
-    private void performLayout() {
+    /** True when it laid the window out (anything on it may have moved). */
+    private boolean performLayout() {
         int sw = screenW(), sh = screenH();
         if (mInsetsDirty || mFirst) {
             mInsetsDirty = false;
@@ -259,7 +290,7 @@ public final class ViewRoot implements ViewParent {
             mLayoutRequested = true;
             if (mSysUiTold >= 0) tellSystemUi();
         }
-        if (!mLayoutRequested && !mView.isLayoutRequested()) return;
+        if (!mLayoutRequested && !mView.isLayoutRequested()) return false;
         mLayoutRequested = false;
         mInLayout = true;
         try {
@@ -306,7 +337,13 @@ public final class ViewRoot implements ViewParent {
             if (mHasFocus) { mView.dispatchWindowFocusChanged(true); mObserver.huskWindowFocus(true); }
             if (mView.findFocus() == null && mView instanceof ViewGroup) { /* the first focusable view takes focus when it asks; nothing forced */ }
         }
+        return true;
     }
+    /* The bands under the clock and the home indicator the topmost full-screen window drew its bars in, in screen pixels: drawAll
+     * runs the content's edges into them (DecorView.draw asks, each frame it draws). */
+    private static int sExtendTop, sExtendBottom;
+    public static void huskExtendEdges(int top, int bottom) { sExtendTop = top; sExtendBottom = bottom; }
+
     private static void drawAll(ArrayList<ViewRoot> roots) {
         int sw = screenW(), sh = screenH();
         if (sScreen == null || sScreen.getWidth() != sw || sScreen.getHeight() != sh) {
@@ -314,10 +351,21 @@ public final class ViewRoot implements ViewParent {
             sScreen = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888);
             sCanvas = new Canvas(sScreen);
         }
-        sScreen.eraseColor(0);
+        /* Only the part that changed, when that is all that did: everything is drawn again inside it (the windows in order, each
+           clipped to it, so what is under a changed view is right), and the rest of the screen keeps last frame's pixels. Views
+           wholly outside it are skipped (View.drawFromParent's quickReject). */
+        boolean partial = !sFull && sPresentedAny && sDirty.intersect(0, 0, sw, sh);
+        if (!sFull && !partial) { sDirty.setEmpty(); return; }          /* a view said it changed, somewhere off the screen */
+        int dl = sDirty.left, dt = sDirty.top, dr = sDirty.right, db = sDirty.bottom;
+        sFull = false;
+        sDirty.setEmpty();
+        int outer = sCanvas.save();
+        if (partial) { sCanvas.clipRect(dl, dt, dr, db); sCanvas.drawColor(0, PorterDuff.Mode.CLEAR); }
+        else sScreen.eraseColor(0);
         int gen = sScreen.getGenerationId();
         Paint dim = null;
         boolean drew = false;
+        sExtendTop = sExtendBottom = 0;
         for (ViewRoot r : roots) {
             if (r.mRemoved || r.mView.getVisibility() != View.VISIBLE) continue;
             if ((r.mLp.flags & WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 && r.mLp.dimAmount > 0) {
@@ -337,9 +385,17 @@ public final class ViewRoot implements ViewParent {
             }
             sCanvas.restoreToCount(save);
         }
+        sCanvas.restoreToCount(outer);
+        if (drew && (sExtendTop > 0 || sExtendBottom > 0)) Gfx.bmExtendEdges(sScreen.huskNative(), sExtendTop, sExtendBottom);
         // a window drawn counts even when its drawing left the generation alone (the screen must lose a closed dialog)
         boolean any = drew || sScreen.getGenerationId() != gen;
-        if (any || sPresentedAny) Gfx.present(any ? sScreen.huskNative() : 0);
+        if (partial && any) {
+            /* the rows that changed go to the screen, and the bands under the clock and the home indicator copy their edge rows */
+            int y0 = dt, y1 = db;
+            if (sExtendTop > 0 && y0 <= sExtendTop) y0 = 0;
+            if (sExtendBottom > 0 && y1 >= sh - sExtendBottom - 1) y1 = sh;
+            Gfx.presentRows(sScreen.huskNative(), y0, y1);
+        } else if (any || sPresentedAny) Gfx.present(any ? sScreen.huskNative() : 0);
         sPresentedAny = any;
     }
 

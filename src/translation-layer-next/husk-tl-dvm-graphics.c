@@ -1444,9 +1444,68 @@ NAT(G_pathLength)
 static struct {
     pthread_mutex_t lock;
     uint8_t *px; int w, h;          /* the latest frame the view system drew */
+    int y0, y1;                     /* the rows changed since the GL thread last took a frame (y0 >= y1: none) */
     atomic_bool fresh;
     atomic_bool any;
 } S = { .lock = PTHREAD_MUTEX_INITIALIZER };
+
+/* Rows y0..y1 from row src. A plain or smoothly shaded row (a toolbar, a gradient header) is stretched as it is; a row with detail in
+ * it (a list row's text and pictures crossing the edge) would stretch into stripes, so the band takes the row's most common colour
+ * instead -- its background. */
+static void extend_band(gbitmap *b, int src, int y0, int y1)
+{
+    const uint32_t *row = (const uint32_t *)(b->px + (size_t)src * b->stride);
+    enum { N = 64 };
+    uint32_t smp[N];
+    bool smooth = true;
+    for (int i = 0; i < N; i++) {
+        smp[i] = row[(size_t)i * (size_t)(b->w - 1) / (N - 1)];
+        if (i) {
+            uint32_t p = smp[i - 1], q = smp[i];
+            for (int k = 0; k < 24 && smooth; k += 8) {
+                int d = (int)((p >> k) & 0xFF) - (int)((q >> k) & 0xFF);
+                if (d > 24 || d < -24) smooth = false;
+            }
+        }
+    }
+    /* every column, not only the samples: a thin line of text between two samples is detail too */
+    for (int x = 1; x < b->w && smooth; x++) {
+        uint32_t p = row[x - 1], q = row[x];
+        for (int k = 0; k < 24; k += 8) {
+            int d = (int)((p >> k) & 0xFF) - (int)((q >> k) & 0xFF);
+            if (d > 40 || d < -40) { smooth = false; break; }
+        }
+    }
+    if (smooth) {
+        for (int y = y0; y < y1; y++) memcpy(b->px + (size_t)y * b->stride, row, b->stride);
+        return;
+    }
+    uint32_t best = smp[0]; int bestn = 0;
+    for (int i = 0; i < N; i++) {
+        int n = 0;
+        for (int j = 0; j < N; j++) n += smp[j] == smp[i];
+        if (n > bestn) { bestn = n; best = smp[i]; }
+    }
+    for (int y = y0; y < y1; y++) {
+        uint32_t *d = (uint32_t *)(b->px + (size_t)y * b->stride);
+        for (int x = 0; x < b->w; x++) d[x] = best;
+    }
+}
+
+/* husk.Gfx.bmExtendEdges(long bitmap, int top, int bottom): the status bar band (rows 0..top) and the home indicator band (the last
+ * `bottom` rows) filled with the content's edge row next to each, stretched. On an iPhone an app's colours run to the screen's edges,
+ * under the clock and the home indicator; Android paints those bands in the bars' colours instead (black, for most apps), which
+ * shows as black stripes no iOS app has. Rows are top first (the canvas flips CG's y). */
+NAT(G_bmExtendEdges)
+{
+    (void)self; (void)ret;
+    gbitmap *b = H(gbitmap, 0);
+    int top = a[1].i, bottom = a[2].i;
+    if (!b || !b->px) return true;
+    if (top > 0 && top < b->h) extend_band(b, top, 0, top);
+    if (bottom > 0 && bottom < b->h) extend_band(b, b->h - bottom - 1, b->h - bottom, b->h);
+    return true;
+}
 
 /* husk.Native.present(long bitmap): the window's views, drawn; the GL thread puts them on screen. */
 NAT(G_present)
@@ -1457,10 +1516,42 @@ NAT(G_present)
     pthread_mutex_lock(&S.lock);
     if (S.w != b->w || S.h != b->h) { free(S.px); S.px = malloc(b->stride * (size_t)b->h); S.w = b->w; S.h = b->h; }
     memcpy(S.px, b->px, b->stride * (size_t)b->h);
+    S.y0 = 0; S.y1 = b->h;
     pthread_mutex_unlock(&S.lock);
     atomic_store(&S.any, true);
     atomic_store(&S.fresh, true);
     return true;
+}
+
+/* husk.Gfx.presentRows(long bitmap, int y0, int y1): only rows y0..y1 changed since the last frame (ViewRoot redrew just the part of
+ * the screen that changed): only they are copied, and only they go to the GPU. */
+NAT(G_presentRows)
+{
+    (void)self; (void)ret;
+    gbitmap *b = H(gbitmap, 0);
+    int y0 = a[1].i, y1 = a[2].i;
+    if (!b) return true;
+    pthread_mutex_lock(&S.lock);
+    bool whole = S.w != b->w || S.h != b->h || !S.px;
+    if (whole) { free(S.px); S.px = malloc(b->stride * (size_t)b->h); S.w = b->w; S.h = b->h; y0 = 0; y1 = b->h; }
+    if (y0 < 0) y0 = 0;
+    if (y1 > b->h) y1 = b->h;
+    if (y0 < y1) {
+        memcpy(S.px + (size_t)y0 * b->stride, b->px + (size_t)y0 * b->stride, b->stride * (size_t)(y1 - y0));
+        if (S.y0 >= S.y1) { S.y0 = y0; S.y1 = y1; }
+        else { if (y0 < S.y0) S.y0 = y0; if (y1 > S.y1) S.y1 = y1; }
+    }
+    pthread_mutex_unlock(&S.lock);
+    atomic_store(&S.any, true);
+    atomic_store(&S.fresh, true);
+    return true;
+}
+
+/* While a frame is taken: the rows that changed in it (y0 >= y1: none known, so all of them). Then none are pending. */
+void tl_ui_frame_rows(int *y0, int *y1)
+{
+    *y0 = S.y0; *y1 = S.y1;
+    S.y0 = S.y1 = 0;
 }
 
 /* For the GL thread: when there is a new frame, its pixels (locked until tl_ui_frame_done). */
@@ -1528,6 +1619,8 @@ static const struct { const char *name, *sig; dvm_native_fn fn; } k_gfx[] = {
     { "pathContains", "([FIIFF)Z", G_pathContains },
     { "pathLength", "([FI[F)F", G_pathLength },
     { "present", "(J)V", G_present },
+    { "presentRows", "(JII)V", G_presentRows },
+    { "bmExtendEdges", "(JII)V", G_bmExtendEdges },
     { NULL, NULL, NULL },
 };
 
