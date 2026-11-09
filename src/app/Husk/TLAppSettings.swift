@@ -249,14 +249,21 @@ struct TLAppSettingsView: View {
             }
 
             Section {
+                if NativeShortcut.available {
+                    Button { NativeShortcut.install(app) } label: {
+                        Label("Install as App", systemImage: "square.and.arrow.down.on.square")
+                    }
+                }
                 Button { AppClip.generate(for: app) } label: {
                     Label("Generate App Clip", systemImage: "apps.iphone.badge.plus")
                 }
             } header: {
                 Text("Home Screen")
             } footer: {
-                Text("Puts \(app.label) on your Home Screen with its own icon. Tapping it opens Husk straight into the game. Husk "
-                   + "downloads a profile: open Settings, tap Profile Downloaded, then Install.")
+                Text("Install as App makes \(app.label) a real app, in the App Library and on the Home Screen, that starts it in "
+                   + "Husk. Choose SideStore, AltStore or TrollStore in the share sheet to install it; with a free Apple ID it "
+                   + "counts toward the three apps you can sideload. Generate App Clip puts an icon on the Home Screen through a "
+                   + "profile instead: open Settings, tap Profile Downloaded, then Install.")
             }
 
             Section {

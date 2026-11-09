@@ -70,10 +70,10 @@ enum AppClip {
 
     private static func safe(_ s: String) -> String { String(s.map { $0.isLetter || $0.isNumber || $0 == "." ? $0 : "-" }) }
 
-    /// The game's icon as a 180-point square PNG (the size iOS draws home-screen icons from).
-    private static func iconPNG(_ app: TLApp) -> Data? {
+    /// The game's icon as an opaque square PNG, 180 pixels by default (the size iOS draws home-screen icons from). Also the
+    /// icons of "Install as App" (NativeShortcut).
+    static func iconPNG(_ app: TLApp, side: CGFloat = 180) -> Data? {
         guard let path = app.iconPath, let image = UIImage(contentsOfFile: path) else { return nil }
-        let side: CGFloat = 180
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true

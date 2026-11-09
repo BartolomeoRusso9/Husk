@@ -137,7 +137,8 @@ private extension Data {
 }
 
 /// Entries stored as they are (method 0). Sizes are known before each entry is written, so the CRC goes in the local header.
-private final class ZipWriter {
+/// Also writes the IPAs of "Install as App" (NativeShortcut), whose executable is marked as one (`executable`).
+final class ZipWriter {
     private let out: FileHandle
     private var central = Data()
     private var count = 0
@@ -149,16 +150,18 @@ private final class ZipWriter {
         out = try FileHandle(forWritingTo: url)
     }
 
-    func add(_ name: String, data: Data) throws { try write(name, size: UInt64(data.count), crc: crc32(0, data)) { try self.out.write(contentsOf: data) } }
+    func add(_ name: String, data: Data, executable: Bool = false) throws {
+        try write(name, size: UInt64(data.count), crc: crc32(0, data), executable: executable) { try self.out.write(contentsOf: data) }
+    }
 
-    func add(_ name: String, file: URL) throws {
+    func add(_ name: String, file: URL, executable: Bool = false) throws {
         let input = try FileHandle(forReadingFrom: file)
         defer { try? input.close() }
         var crc: UInt32 = 0, size: UInt64 = 0
         while let chunk = try input.read(upToCount: 1 << 20), !chunk.isEmpty { crc = crc32(crc, chunk); size += UInt64(chunk.count) }
         guard size < 0xFFFF_FFFF, offset < 0xFFFF_FFFF else { throw SaveBackup.Failure("A save file is too large to back up.") }
         try input.seek(toOffset: 0)
-        try write(name, size: size, crc: crc) {
+        try write(name, size: size, crc: crc, executable: executable) {
             var left = size
             while left > 0, let chunk = try input.read(upToCount: Int(Swift.min(left, 1 << 20))), !chunk.isEmpty {
                 try self.out.write(contentsOf: chunk); left -= UInt64(chunk.count)
@@ -166,7 +169,7 @@ private final class ZipWriter {
         }
     }
 
-    private func write(_ name: String, size: UInt64, crc: UInt32, body: () throws -> Void) throws {
+    private func write(_ name: String, size: UInt64, crc: UInt32, executable: Bool, body: () throws -> Void) throws {
         let n = Data(name.utf8)
         var h = Data()
         h.le32(0x0403_4b50); h.le16(20); h.le16(0x0800); h.le16(0); h.le16(0); h.le16(0x21)
@@ -177,7 +180,7 @@ private final class ZipWriter {
         var c = Data()
         c.le32(0x0201_4b50); c.le16(0x031E); c.le16(20); c.le16(0x0800); c.le16(0); c.le16(0); c.le16(0x21)
         c.le32(crc); c.le32(UInt32(size)); c.le32(UInt32(size)); c.le16(n.count); c.le16(0); c.le16(0); c.le16(0); c.le16(0)
-        c.le32(0o100644 << 16); c.le32(UInt32(offset)); c.append(n)
+        c.le32((executable ? 0o100755 : 0o100644) << 16); c.le32(UInt32(offset)); c.append(n)
         central.append(c)
         offset += UInt64(h.count) + size
         count += 1

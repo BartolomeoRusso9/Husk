@@ -122,6 +122,10 @@ targets:
       - target: HuskJITHelper
       # The download Live Activity (Lock Screen and Dynamic Island). Embedded into PlugIns/.
       - target: HuskDownloadsWidget
+      # The app behind "Install as App". Built, never embedded as an app: "Stage shortcut stub" copies its executable in.
+      - target: HuskShortcut
+        embed: false
+        link: false
       # Built by scripts/build_ios.sh. Embedded and signed into the bundle.
       - framework: ../../build/ios-arm64/lib/libqemu-aarch64-softmmu.dylib
         embed: true
@@ -265,6 +269,38 @@ targets:
             codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none "$DST"
           fi
         basedOnDependencyAnalysis: false
+      - name: Stage shortcut stub
+        # HuskShortcut's executable, as a resource (not an .app: a sideloader would treat a nested app as part of Husk).
+        # NativeShortcut writes an IPA around it for each Android app.
+        script: |
+          set -e
+          SRC="$BUILT_PRODUCTS_DIR/HuskShortcut.app/HuskShortcut"
+          if [ ! -f "$SRC" ]; then
+            echo "warning: HuskShortcut was not built: Install as App will be unavailable" >&2
+            exit 0
+          fi
+          cp "$SRC" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/HuskShortcut.stub"
+        basedOnDependencyAnalysis: false
+
+  # "Install as App" (NativeShortcut.swift): the executable Husk wraps in an IPA per Android app, with that app's name and
+  # icon, so it can be installed as a real iOS app that opens Husk on it.
+  HuskShortcut:
+    type: application
+    platform: iOS
+    sources:
+      - path: HuskShortcut
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(HUSK_BUNDLE_IDENTIFIER).Shortcut
+        INFOPLIST_FILE: HuskShortcut/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # One small binary, no asset catalog and no Swift libraries of its own (iOS 15.5 has them).
+        DEAD_CODE_STRIPPING: YES
+        STRIP_INSTALLED_PRODUCT: YES
 
   # Built-in StikJIT's debugger (docs/06-built-in-jit.md). A process cannot
   # synchronously debug itself, so StikJIT runs here and attaches to the app.
