@@ -9,6 +9,7 @@ import os
 struct SettingsTab: View {
     @AppStorage(AppWindows.defaultKey) private var multitask = false
     @AppStorage(CompatibilityStore.askKey) private var askCompat = true
+    @AppStorage(JavaMemory.key) private var javaGC = JavaMemory.defaultMode
     @ObservedObject private var account = Account.shared
 
     var body: some View {
@@ -61,6 +62,20 @@ struct SettingsTab: View {
                 } footer: {
                     Text("Apps and games open in a window you can move, resize and minimise to a dock, like LiveContainer's multitasking. "
                        + "Each app can override this in its own settings.")
+                }
+
+                Section {
+                    Picker("Free Unused Memory", selection: $javaGC) {
+                        Text("On").tag(JavaMemory.on)
+                        Text("Measure Only").tag(JavaMemory.measure)
+                        Text("Off").tag(JavaMemory.off)
+                    }
+                } header: {
+                    Text("Memory")
+                } footer: {
+                    Text("For Java and Kotlin apps. On, Husk finds the objects an app no longer uses and frees them, so it no longer runs "
+                       + "out of memory after a few minutes. Measure Only works out what could be freed and writes it to the log, without "
+                       + "freeing anything. Applies the next time an app starts.")
                 }
 
                 Section {
@@ -1116,4 +1131,12 @@ extension Bundle {
     var commit: String {
         (infoDictionary?["HuskBuildCommit"] as? String) ?? "?"
     }
+}
+
+/// The Java runtime's garbage collector (src/translation-layer-next/husk-tl-gc.c), handed to it as each Java app starts.
+enum JavaMemory {
+    static let key = "husk.javaGC"
+    static let off = 0, measure = 1, on = 2
+    static let defaultMode = measure
+    static var mode: Int { UserDefaults.standard.object(forKey: key) as? Int ?? defaultMode }
 }

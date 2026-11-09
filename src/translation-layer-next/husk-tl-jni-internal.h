@@ -46,6 +46,7 @@ struct tl_jclass {
     tl_jclass *next;
     void *dvm;                         /* the interpreter's class (husk-tl-dvm.c), or NULL */
     _Atomic bool linking;              /* declared, its bytecode still being linked (by the thread holding the link lock) */
+    int8_t gc_fin;                     /* its instances override finalize(): 1, -1 not, 0 not asked yet (husk-tl-gc.c) */
 };
 
 /* A class another thread is still linking: wait for it (returns at once on the linking thread itself). */

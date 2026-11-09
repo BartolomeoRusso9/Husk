@@ -314,6 +314,8 @@ final class TLUnityUIView: UIView, UIKeyInput {
         case .java:
             // Husk's Dalvik runtime: libcore, ICU and Husk's Java framework, carried in the app.
             husk_java_set_runtime((Bundle.main.resourcePath ?? "") + "/java-runtime", Float(contentScaleFactor))
+            husk_java_set_gc(Int32(JavaMemory.mode))
+            husk_java_set_refresh(Int32(window?.screen.maximumFramesPerSecond ?? UIScreen.main.maximumFramesPerSecond))
             husk_java_set_night_mode(traitCollection.userInterfaceStyle == .dark ? 1 : 0)
             // The notch and the home indicator, in surface pixels: the app's window keeps its content out of them.
             if let inset = windowed ? UIEdgeInsets.zero : window?.safeAreaInsets {

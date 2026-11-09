@@ -11,6 +11,7 @@
 
 #include "husk-tl-bionic.h"
 #include "husk-tl-dexindex.h"
+#include "husk-tl-gc.h"
 #include "husk-tl-va.h"
 
 /* ---------------------------------------------------------------- types */
@@ -37,7 +38,7 @@ static uint32_t hash_str(const char *s) { uint32_t h = 2166136261u; while (*s) {
 
 static jobj *obj_alloc(uint8_t kind, tl_jclass *cls)
 {
-    jobj *o = calloc(1, sizeof(*o));
+    jobj *o = tl_gc_obj_alloc();          /* zeroed, from the collector's arena */
     o->refs = 1;
     o->kind = kind;
     o->cls = cls;
@@ -60,8 +61,32 @@ void tl_jni_unref(jobj *o)
     default: break;
     }
     free(o->fields);
-    free(o);
+    tl_gc_obj_free(o);
 }
+
+/* ---- for the collector (husk-tl-gc.c) */
+
+/* Every class, without the lock: a bucket only ever gains a class at its head, so a walk sees a consistent list. fn may declare
+ * classes itself (it is run outside a collection). */
+void tl_jni_each_class(void (*fn)(void *jclass))
+{
+    for (int b = 0; b < NBUCKETS; b++)
+        for (tl_jclass *c = __atomic_load_n(&g_classes[b], __ATOMIC_ACQUIRE); c; c = c->next) fn(c);
+}
+
+/* The world is stopped: classes' mirrors and statics, detached fields' values, and what the interpreter keeps per class. */
+void dvm_gc_class_roots(void *dvm_class);
+void tl_jni_gc_roots(void)
+{
+    for (int b = 0; b < NBUCKETS; b++)
+        for (tl_jclass *c = g_classes[b]; c; c = c->next) {
+            tl_gc_mark_word((uintptr_t)c->mirror);
+            if (c->statics && c->nstatics > 0) tl_gc_mark_range(c->statics, (size_t)c->nstatics * sizeof(jvalue));
+            for (int i = 0; c->fields && i < c->nfields; i++) if (c->fields[i] && c->fields[i]->detached) tl_gc_mark_word((uintptr_t)c->fields[i]->dval.l);
+            if (c->dvm) dvm_gc_class_roots(c->dvm);
+        }
+}
+
 
 static tl_jclass *find_class_locked(const char *name)
 {
@@ -452,6 +477,7 @@ jvalue tl_jni_get_static(const char *cls, const char *name, const char *sig)
 /* ------------------------------------------------------------- exceptions */
 
 static __thread jobj *t_pending;
+void *tl_jni_tls_pending_addr(void) { return &t_pending; }
 
 void tl_jni_throw(const char *cls, const char *msg)
 {

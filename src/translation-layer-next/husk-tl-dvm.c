@@ -14,6 +14,7 @@
 
 #include "husk-tl-bionic.h"
 #include "husk-tl-internal.h"
+#include "husk-tl-gc.h"
 #include "husk-tl-arm32.h"
 #include "husk-tl-ld.h"
 
@@ -984,8 +985,13 @@ static bool watch_hit(const char *w, const dvm_method *m)
     return false;
 }
 
+/* Interpreter registers on the heap (methods with more than 64), innermost first: the collector's roots (husk-tl-gc.c). */
+static _Thread_local tl_gc_regs *t_regchain;
+void *dvm_tls_regchain_addr(void) { return &t_regchain; }
+
 bool dvm_call(dvm_method *m, jobj *self, const jvalue *params, jvalue *ret)
 {
+    tl_gc_thread_attach();
     if (t_depth < 8192) { t_frames[t_depth] = m; t_pcs[t_depth] = 0; }
     t_depth++;
     /* past 8000 frames: StackOverflowError, which is made with calls of its own, so those get 200 frames more (a deeper one
@@ -1064,8 +1070,10 @@ static bool dvm_call_inner(dvm_method *m, jobj *self, const jvalue *params, jval
         default: regs[r++] = (uint32_t)params[i].i; break;
         }
     }
+    tl_gc_regs chain = { t_regchain, regs, m->regs };
+    if (regs != small) t_regchain = &chain;
     bool ok = interpret(m, regs, ret);
-    if (regs != small) free(regs);
+    if (regs != small) { t_regchain = chain.prev; free(regs); }
     return ok;
 }
 
@@ -2444,4 +2452,53 @@ bool tl_dvm_call_static(const char *cls, const char *name, const char *sig, cons
     if (!dvm_ensure_init(c)) return false;
     jvalue r; if (!ret) ret = &r;
     return dvm_call(m, NULL, args, ret);
+}
+
+/* ================================================================== the garbage collector's (husk-tl-gc.c) */
+
+/* The world is stopped. The dex files' interned constant strings and class loaders. */
+void dvm_gc_roots(void)
+{
+    for (int i = 0; i < g_ndex; i++) {
+        dvm_dex *d = g_dex[i];
+        if (!d) continue;
+        if (d->scache) tl_gc_mark_range(d->scache, (size_t)d->nstr * sizeof(jobj *));
+        tl_gc_mark_word((uintptr_t)d->loader);
+    }
+    tl_gc_mark_word((uintptr_t)g_app_loader);
+}
+
+/* The world is stopped. A Proxy class's methods keep the interface Method and the exceptions they declare. */
+void dvm_gc_class_roots(void *p)
+{
+    dvm_class *c = p;
+    for (int i = 0; c->dm && i < c->ndm; i++) { tl_gc_mark_word((uintptr_t)c->dm[i].proxy_method); tl_gc_mark_word((uintptr_t)c->dm[i].proxy_throws); }
+    for (int i = 0; c->vm && i < c->nvm; i++) { tl_gc_mark_word((uintptr_t)c->vm[i].proxy_method); tl_gc_mark_word((uintptr_t)c->vm[i].proxy_throws); }
+}
+
+/* Whether the class's instances override Object.finalize(). Asked outside a collection: looking it up may link classes. */
+int dvm_gc_finalizable(void *p)
+{
+    tl_jclass *jc = p;
+    if (!jc || !jc->dvm || jc->linking || jc->name[0] == '[') return -1;
+    dvm_method *m = dvm_find_virtual(jc, "finalize", "()V");
+    tl_jni_clear();
+    if (!m || !m->cls || !strcmp(m->cls->name, "java/lang/Object")) return -1;
+    /* an empty finalize (return-void alone) does nothing worth keeping an object for */
+    if (m->insns && m->ninsns <= 1) return -1;
+    return 1;
+}
+
+/* o.finalize() on the finalizer thread; what it throws is dropped, as Java's finalizer daemon drops it. */
+void dvm_gc_run_finalizer(jobj *o)
+{
+    if (!o || !o->cls) return;
+    dvm_method *m = dvm_find_virtual(o->cls, "finalize", "()V");
+    if (!m) return;
+    jvalue r;
+    if (!dvm_call(m, o, NULL, &r)) {
+        char buf[300];
+        tl_log_line("gc: %s.finalize() threw %s", o->cls->name, tl_dvm_describe_pending(buf, sizeof(buf)) ? buf : "?");
+    }
+    tl_jni_clear();
 }

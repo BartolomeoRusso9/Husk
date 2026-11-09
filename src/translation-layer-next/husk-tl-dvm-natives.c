@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "husk-tl-bionic.h"
+#include "husk-tl-gc.h"
 #include "husk-tl-internal.h"
 #include <strings.h>
 
@@ -184,6 +185,10 @@ NAT(String_intern)
 }
 /* The canonical copy of a string (String.intern): every string literal goes through here, so equal literals are one object across
  * classes and dex files, as Java promises -- code compares them with == (p4a's AssetExtract: method == "private"). */
+/* The collector (husk-tl-gc.c): the table is held across a collection, and every string in it is kept. */
+bool dvm_natives_gc_trylock(void) { return pthread_mutex_trylock(&g_intern_lock) == 0; }
+void dvm_natives_gc_unlock(void) { pthread_mutex_unlock(&g_intern_lock); }
+void dvm_natives_gc_roots(void) { if (g_interned) tl_gc_mark_range(g_interned, (size_t)g_icap * sizeof(jobj *)); }
 jobj *dvm_intern(jobj *s) { jvalue r; if (!s || !String_intern(s, NULL, &r) || !r.l) return s; return r.l; }
 NAT(String_toCharArray)
 {
@@ -571,6 +576,7 @@ NAT(VMR_classPath) { UNUSED; *ret = L(dvm_new_string_utf8("")); return true; }
 /* ================================================================== Thread */
 
 static _Thread_local jobj *t_thread;
+void *dvm_tls_thread_addr(void) { return &t_thread; }
 static pthread_mutex_t g_tid_lock = PTHREAD_MUTEX_INITIALIZER;
 
 jobj *dvm_current_thread(void)

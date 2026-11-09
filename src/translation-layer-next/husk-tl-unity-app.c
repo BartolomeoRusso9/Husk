@@ -20,6 +20,7 @@
 #endif
 
 #include "husk-tl-bionic.h"
+#include "husk-tl-gc.h"
 #include "husk-tl-internal.h"
 #include "husk-tl-jni.h"
 #include "husk-tl-ld.h"
@@ -52,6 +53,7 @@ enum { ENGINE_UNITY = 0, ENGINE_COCOS = 1, ENGINE_GAMEACTIVITY = 2, ENGINE_SDL =
 /* Where the Java runtime is: the ART, i18n, tzdata and conscrypt APEX folders and husk-framework.dex (scripts/build_java_runtime.sh). */
 static char g_java_root[1024];
 static float g_java_density = 3.0f;
+static int g_java_gc = TL_GC_DRY;
 static int g_java_insets[4];
 static bool g_java_night;
 static struct {
@@ -362,6 +364,8 @@ static void *launch_thread(void *arg)
                 .insets = { g_java_insets[0], g_java_insets[1], g_java_insets[2], g_java_insets[3] }, .night_mode = g_java_night,
             };
             ok = tl_javaapp_start(&cfg);
+            /* the Java runtime's objects are collected from here on (husk-tl-gc.c); measured only, for now, unless TL_GC says */
+            if (ok) tl_gc_start(g_java_gc);
         }
     } else if (A.engine == ENGINE_GODOT) {
         tl_godot_config cfg = {
@@ -538,6 +542,9 @@ bool husk_java_launch(const char *apk, const char *data_dir, void *metal_layer, 
 {
     return launch(ENGINE_JAVA, apk, data_dir, metal_layer, width, height, angle_dylib, ca_bundle);
 }
+void husk_java_set_refresh(int hz) { tl_javaapp_set_refresh(hz); }
+void husk_java_set_gc(int mode) { g_java_gc = mode < 0 ? 0 : mode > 2 ? 2 : mode; }
+
 void husk_java_set_runtime(const char *root, float density)
 {
     snprintf(g_java_root, sizeof(g_java_root), "%s", root ? root : "");

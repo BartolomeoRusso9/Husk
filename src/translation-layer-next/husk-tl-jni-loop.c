@@ -22,6 +22,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include "husk-tl-gc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -221,6 +222,41 @@ typedef struct handler { looper *lp; jobj *callback; } handler;
 static __thread looper *t_looper;
 static looper *g_main;
 static pthread_mutex_t g_main_mu = PTHREAD_MUTEX_INITIALIZER;
+
+/* Every looper, for the garbage collector: their queues hold the messages and runnables posted to them (husk-tl-gc.c). */
+#define MAX_LOOPERS 512
+static looper *g_loopers[MAX_LOOPERS];
+static int g_nloopers;
+static pthread_mutex_t g_loopers_mu = PTHREAD_MUTEX_INITIALIZER;
+
+bool tl_loop_gc_trylock(void)
+{
+    if (pthread_mutex_trylock(&g_loopers_mu)) return false;
+    int i = 0;
+    for (; i < g_nloopers; i++) if (pthread_mutex_trylock(&g_loopers[i]->mu)) break;
+    if (i == g_nloopers) return true;
+    while (i-- > 0) pthread_mutex_unlock(&g_loopers[i]->mu);
+    pthread_mutex_unlock(&g_loopers_mu);
+    return false;
+}
+void tl_loop_gc_unlock(void)
+{
+    for (int i = 0; i < g_nloopers; i++) pthread_mutex_unlock(&g_loopers[i]->mu);
+    pthread_mutex_unlock(&g_loopers_mu);
+}
+/* The world is stopped, and every looper's lock is held: nothing is mid-change. */
+void tl_loop_gc_roots(void)
+{
+    for (int i = 0; i < g_nloopers; i++) {
+        looper *l = g_loopers[i];
+        tl_gc_mark_word((uintptr_t)l->mirror);
+        tl_gc_mark_word((uintptr_t)l->choreographer);
+        for (ev *e = l->head; e; e = e->next) {
+            tl_gc_mark_word((uintptr_t)e->handler); tl_gc_mark_word((uintptr_t)e->msg);
+            tl_gc_mark_word((uintptr_t)e->run); tl_gc_mark_word((uintptr_t)e->frame);
+        }
+    }
+}
 static void *looper_thread(void *arg);
 
 static looper *looper_new(const char *name)
@@ -232,6 +268,10 @@ static looper *looper_new(const char *name)
     l->mirror = tl_jni_new_object(C("android/os/Looper"));
     l->mirror->native = l;
     tl_jni_ref(l->mirror);
+    pthread_mutex_lock(&g_loopers_mu);
+    if (g_nloopers < MAX_LOOPERS) g_loopers[g_nloopers++] = l;
+    else tl_gc_forbid_freeing("more loopers than the collector keeps track of");
+    pthread_mutex_unlock(&g_loopers_mu);
     return l;
 }
 
