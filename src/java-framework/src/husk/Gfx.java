@@ -68,4 +68,7 @@ public final class Gfx {
     public static native void presentRows(long bm, int y0, int y1);
     /** Fill the top {@code top} rows and the bottom {@code bottom} rows with the content's rows next to them (ViewRoot.drawAll). */
     public static native void bmExtendEdges(long bm, int top, int bottom);
+    /** Keep rows y0..y1 of the bitmap (slot 0 or 1), and whether they are still what was kept. */
+    public static native void bmBandKeep(long bm, int y0, int y1, int slot);
+    public static native boolean bmBandSame(long bm, int y0, int y1, int slot);
 }

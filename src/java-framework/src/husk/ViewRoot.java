@@ -343,6 +343,27 @@ public final class ViewRoot implements ViewParent {
      * runs the content's edges into them (DecorView.draw asks, each frame it draws). */
     private static int sExtendTop, sExtendBottom;
     public static void huskExtendEdges(int top, int bottom) { sExtendTop = top; sExtendBottom = bottom; }
+    /* Bands the topmost full-screen window left to its background (it lays out under the bars and keeps its content off them):
+       run into like the above when the app drew nothing over that background there. Looked at on full redraws (the background
+       is drawn again under them); a partial redraw keeps the last answer (the band then holds last frame's stretched edge). */
+    private static int sBlankTop, sBlankBottom;
+    private static boolean sBlankTopOn, sBlankBottomOn, sDrawingFull;
+    /* DecorView.draw, with its background drawn and before its views: the bands as they are now, and after its views, whether
+       they changed */
+    public static void huskBandsBefore(int top, int bottom) {
+        if (!sDrawingFull || sScreen == null) return;
+        int sh = sScreen.getHeight();
+        if (top > 0 && top < sh) Gfx.bmBandKeep(sScreen.huskNative(), 0, top, 0);
+        if (bottom > 0 && bottom < sh) Gfx.bmBandKeep(sScreen.huskNative(), sh - bottom, sh, 1);
+    }
+    public static boolean huskBandsAfter(int top, int bottom) {
+        if (!sDrawingFull || sScreen == null) return sBlankTopOn || sBlankBottomOn;
+        int sh = sScreen.getHeight();
+        sBlankTopOn = top > 0 && top < sh && Gfx.bmBandSame(sScreen.huskNative(), 0, top, 0);
+        sBlankBottomOn = bottom > 0 && bottom < sh && Gfx.bmBandSame(sScreen.huskNative(), sh - bottom, sh, 1);
+        return sBlankTopOn || sBlankBottomOn;
+    }
+    public static void huskExtendIfBlank(int top, int bottom) { sBlankTop = top; sBlankBottom = bottom; }
 
     private static void drawAll(ArrayList<ViewRoot> roots) {
         int sw = screenW(), sh = screenH();
@@ -366,6 +387,8 @@ public final class ViewRoot implements ViewParent {
         Paint dim = null;
         boolean drew = false;
         sExtendTop = sExtendBottom = 0;
+        sBlankTop = sBlankBottom = 0;
+        sDrawingFull = !partial;
         for (ViewRoot r : roots) {
             if (r.mRemoved || r.mView.getVisibility() != View.VISIBLE) continue;
             if ((r.mLp.flags & WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 && r.mLp.dimAmount > 0) {
@@ -386,6 +409,10 @@ public final class ViewRoot implements ViewParent {
             sCanvas.restoreToCount(save);
         }
         sCanvas.restoreToCount(outer);
+        if (drew) {
+            if (sBlankTopOn && sBlankTop > 0 && sExtendTop == 0) sExtendTop = sBlankTop;
+            if (sBlankBottomOn && sBlankBottom > 0 && sExtendBottom == 0) sExtendBottom = sBlankBottom;
+        }
         if (drew && (sExtendTop > 0 || sExtendBottom > 0)) Gfx.bmExtendEdges(sScreen.huskNative(), sExtendTop, sExtendBottom);
         // a window drawn counts even when its drawing left the generation alone (the screen must lose a closed dialog)
         boolean any = drew || sScreen.getGenerationId() != gen;

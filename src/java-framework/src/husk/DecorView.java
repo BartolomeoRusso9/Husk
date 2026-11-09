@@ -129,6 +129,7 @@ public final class DecorView extends FrameLayout {
                 lp.setMargins(mInsetLeft, mInsetTop, mInsetRight, mInsetBottom);
                 mStack.setLayoutParams(lp);
             }
+            mEdgeTop = mEdgeBottom = 0;
             WindowInsets rest = in.consumeSystemWindowInsets();
             super.dispatchApplyWindowInsets(rest);
             return rest;
@@ -144,16 +145,21 @@ public final class DecorView extends FrameLayout {
             mBackground.setBounds(0, 0, getWidth(), getHeight());
             mBackground.draw(c);
         }
+        boolean screen = !mWindow.isFloating() && mWindow.getAttributes().type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
+        if (screen) husk.ViewRoot.huskBandsBefore(mEdgeTop, mEdgeBottom);
         super.draw(c);
+        boolean untouched = screen && husk.ViewRoot.huskBandsAfter(mEdgeTop, mEdgeBottom);
         // the bars' own colours over the areas the content was kept out of
         if (mInsetTop > 0 && !mWindow.isFloating()) { mBarPaint.setColor(mWindow.getStatusBarColor()); c.drawRect(0, 0, getWidth(), mInsetTop, mBarPaint); }
         if (mInsetBottom > 0 && !mWindow.isFloating()) { mBarPaint.setColor(mWindow.getNavigationBarColor()); c.drawRect(0, getHeight() - mInsetBottom, getWidth(), getHeight(), mBarPaint); }
-        if ((mEdgeTop > 0 || mEdgeBottom > 0) && mWindow.getAttributes().type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) runBarsToEdges(c);
-        // ...which on an iPhone are not bars: the screen's own window asks ViewRoot to run the content's edges into them instead
-        // (an opaque bar colour only: a transparent one already shows what the app draws there)
+        if (!untouched && (mEdgeTop > 0 || mEdgeBottom > 0) && mWindow.getAttributes().type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) runBarsToEdges(c);
+        // ...which on an iPhone are not bars: the screen's own window asks ViewRoot to run the content's edges into them instead,
+        // whatever the bars' colour (a transparent one shows the window below this one there, an activity the app left behind)
         if (!mWindow.isFloating() && mWindow.getAttributes().type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) {
-            husk.ViewRoot.huskExtendEdges(mInsetTop > 0 && Color.alpha(mWindow.getStatusBarColor()) == 255 ? mInsetTop : 0,
-                                          mInsetBottom > 0 && Color.alpha(mWindow.getNavigationBarColor()) == 255 ? mInsetBottom : 0);
+            husk.ViewRoot.huskExtendEdges(mInsetTop, mInsetBottom);
+            // an app that lays out under the bars (Compose's edge to edge) but keeps its content clear of them leaves those bands
+            // to the window's background: they too take the content's edges, when nothing but that background is in them
+            husk.ViewRoot.huskExtendIfBlank(mEdgeTop, mEdgeBottom);
         }
     }
 

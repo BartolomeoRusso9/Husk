@@ -1544,8 +1544,8 @@ static struct {
 } S = { .lock = PTHREAD_MUTEX_INITIALIZER };
 
 /* Rows y0..y1 from row src. A plain or smoothly shaded row (a toolbar, a gradient header) is stretched as it is; a row with detail in
- * it (a list row's text and pictures crossing the edge) would stretch into stripes, so the band takes the row's most common colour
- * instead -- its background. */
+ * it (a list row's text and pictures crossing the edge) would stretch into stripes, so each part of the band takes the most common
+ * colour near it, on the edge row and a few behind it, instead -- the background of the panel it is in. */
 static void extend_band(gbitmap *b, int src, int y0, int y1)
 {
     const uint32_t *row = (const uint32_t *)(b->px + (size_t)src * b->stride);
@@ -1574,16 +1574,41 @@ static void extend_band(gbitmap *b, int src, int y0, int y1)
         for (int y = y0; y < y1; y++) memcpy(b->px + (size_t)y * b->stride, row, b->stride);
         return;
     }
-    uint32_t best = smp[0]; int bestn = 0;
-    for (int i = 0; i < N; i++) {
-        int n = 0;
-        for (int j = 0; j < N; j++) n += smp[j] == smp[i];
-        if (n > bestn) { bestn = n; best = smp[i]; }
+    /* each block of 8 columns takes the most common colour around it -- 48 pixels either side, on the edge row and the four
+       rows every 6 behind it (away from the band) -- the background of the panel it is in: a side drawer's on the left, the
+       screen's under it on the right. Text and icons crossing the edge are too few of any one colour to win. */
+    enum { R = 48, STEP = 6, ROWS = 5, BLK = 8 };
+    int dir = y0 == 0 ? 1 : -1;                 /* rows behind the edge, away from the band: down for the top one, up for the bottom */
+    uint32_t *tmp = malloc((size_t)b->w * 4);
+    if (!tmp) return;
+    for (int x0 = 0; x0 < b->w; x0 += BLK) {
+        int cx = x0 + BLK / 2;
+        uint32_t win[(2 * R / STEP + 1) * ROWS]; int nw = 0;
+        for (int k = 0; k < ROWS; k++) {
+            int yy = src + dir * k * STEP;
+            if (yy < 0 || yy >= b->h) continue;
+            const uint32_t *r = (const uint32_t *)(b->px + (size_t)yy * b->stride);
+            for (int dx = -R; dx <= R; dx += STEP) { int xx = cx + dx; if (xx >= 0 && xx < b->w) win[nw++] = r[xx]; }
+        }
+        /* the candidates are the block's own pixels (so a panel's colour never spills past its side), scored by how often they
+           are in the window */
+        uint32_t best = row[cx < b->w ? cx : b->w - 1]; int bestn = 0;
+        for (int k = 0; k < ROWS; k++) {
+            int yy = src + dir * k * STEP;
+            if (yy < 0 || yy >= b->h) continue;
+            const uint32_t *r = (const uint32_t *)(b->px + (size_t)yy * b->stride);
+            for (int x = x0; x < x0 + BLK && x < b->w; x += 2) {
+                uint32_t c = r[x]; int n = 0;
+                for (int j = 0; j < nw; j++) n += win[j] == c;
+                if (n > bestn) { bestn = n; best = c; }
+            }
+        }
+        /* nothing repeats (a gradient, a picture): the block's own colour on the edge row */
+        if (bestn <= 1) best = row[cx < b->w ? cx : b->w - 1];
+        for (int x = x0; x < x0 + BLK && x < b->w; x++) tmp[x] = best;
     }
-    for (int y = y0; y < y1; y++) {
-        uint32_t *d = (uint32_t *)(b->px + (size_t)y * b->stride);
-        for (int x = 0; x < b->w; x++) d[x] = best;
-    }
+    for (int y = y0; y < y1; y++) memcpy(b->px + (size_t)y * b->stride, tmp, (size_t)b->w * 4);
+    free(tmp);
 }
 
 /* husk.Gfx.bmExtendEdges(long bitmap, int top, int bottom): the status bar band (rows 0..top) and the home indicator band (the last
@@ -1598,6 +1623,37 @@ NAT(G_bmExtendEdges)
     if (!b || !b->px) return true;
     if (top > 0 && top < b->h) extend_band(b, top, 0, top);
     if (bottom > 0 && bottom < b->h) extend_band(b, b->h - bottom - 1, b->h - bottom, b->h);
+    return true;
+}
+
+/* husk.Gfx.bmBandKeep(long bitmap, int y0, int y1, int slot) and bmBandSame(...): rows y0..y1 kept, and whether they are still
+ * the same -- the bands under the clock and the home indicator as the window's background left them, and whether the app drew
+ * anything over them after (ViewRoot runs the content's edges into a band it left alone). */
+static struct { uint8_t *px; size_t n; } g_band[2];
+static bool band_args(gbitmap *b, int y0, int y1, int slot, size_t *off, size_t *n)
+{
+    if (!b || !b->px || slot < 0 || slot > 1 || y0 < 0 || y1 > b->h || y0 >= y1) return false;
+    *off = (size_t)y0 * b->stride; *n = (size_t)(y1 - y0) * b->stride;
+    return true;
+}
+NAT(G_bmBandKeep)
+{
+    (void)self; (void)ret;
+    gbitmap *b = H(gbitmap, 0);
+    int slot = a[3].i; size_t off, n;
+    if (!band_args(b, a[1].i, a[2].i, slot, &off, &n)) return true;
+    if (g_band[slot].n != n) { free(g_band[slot].px); g_band[slot].px = malloc(n); g_band[slot].n = g_band[slot].px ? n : 0; }
+    if (g_band[slot].px) memcpy(g_band[slot].px, b->px + off, n);
+    return true;
+}
+NAT(G_bmBandSame)
+{
+    (void)self;
+    gbitmap *b = H(gbitmap, 0);
+    int slot = a[3].i; size_t off, n;
+    *ret = Ii(0);
+    if (!band_args(b, a[1].i, a[2].i, slot, &off, &n) || g_band[slot].n != n || !g_band[slot].px) return true;
+    *ret = Ii(memcmp(g_band[slot].px, b->px + off, n) == 0);
     return true;
 }
 
@@ -1715,6 +1771,8 @@ static const struct { const char *name, *sig; dvm_native_fn fn; } k_gfx[] = {
     { "present", "(J)V", G_present },
     { "presentRows", "(JII)V", G_presentRows },
     { "bmExtendEdges", "(JII)V", G_bmExtendEdges },
+    { "bmBandKeep", "(JIII)V", G_bmBandKeep },
+    { "bmBandSame", "(JIII)Z", G_bmBandSame },
     { NULL, NULL, NULL },
 };
 
