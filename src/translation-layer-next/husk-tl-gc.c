@@ -907,6 +907,103 @@ static void *collector_thread(void *arg)
     return NULL;
 }
 
+/* ------------------------------------------------------------------ a sampling profiler */
+
+/* TL_PROFILE (a file of that name in Documents, or the variable): the Java app's main thread is stopped a thousand times a second
+ * and where it was -- the function it was in, and every function on its stack -- is counted; every 15 seconds the most frequent
+ * addresses are logged, with the image's slide, for atos. What the interpreter spends its time on, measured on the phone. */
+#define PROF_SLOTS 8192
+typedef struct { uintptr_t pc; uint32_t n; } prof_slot;
+static prof_slot g_prof_self[PROF_SLOTS], g_prof_incl[PROF_SLOTS];
+static uint64_t g_prof_samples;
+static void prof_count(prof_slot *t, uintptr_t pc)
+{
+    uint32_t h = (uint32_t)((pc >> 2) * 2654435761u) & (PROF_SLOTS - 1);
+    for (int i = 0; i < 64; i++, h = (h + 1) & (PROF_SLOTS - 1)) {
+        if (t[h].pc == pc) { t[h].n++; return; }
+        if (!t[h].pc) { t[h].pc = pc; t[h].n = 1; return; }
+    }
+}
+static int prof_cmp(const void *a, const void *b) { uint32_t x = ((const prof_slot *)a)->n, y = ((const prof_slot *)b)->n; return x < y ? 1 : x > y ? -1 : 0; }
+static void prof_report(prof_slot *t, const char *what)
+{
+    static prof_slot sorted[PROF_SLOTS];
+    memcpy(sorted, t, sizeof(sorted));
+    qsort(sorted, PROF_SLOTS, sizeof(prof_slot), prof_cmp);
+    char line[1024]; size_t k = 0;
+    for (int i = 0; i < 48 && sorted[i].n; i++) {
+        k += (size_t)snprintf(line + k, sizeof(line) - k, " %lx:%u", (unsigned long)sorted[i].pc, sorted[i].n);
+        if (k > sizeof(line) - 40 || i % 12 == 11) { tl_log_line("prof %s:%s", what, line); k = 0; }
+    }
+    if (k) tl_log_line("prof %s:%s", what, line);
+}
+static void *profiler_thread(void *arg)
+{
+    (void)arg;
+    pthread_setname_np("husk-prof");
+    tl_log_line("prof: sampling the app's main thread, image slide %#lx", (unsigned long)_dyld_get_image_vmaddr_slide(0));
+    thread_act_t target = MACH_PORT_NULL; uintptr_t lo = 0, hi = 0;
+    double last = now_ms();
+    for (;;) {
+        usleep(1000);
+        if (target == MACH_PORT_NULL) {
+            thread_act_array_t list; mach_msg_type_number_t n;
+            if (task_threads(mach_task_self(), &list, &n) == KERN_SUCCESS) {
+                for (mach_msg_type_number_t i = 0; i < n; i++) {
+                    pthread_t p = pthread_from_mach_thread_np(list[i]); char nm[64] = "";
+                    if (p) pthread_getname_np(p, nm, sizeof(nm));
+                    if (target == MACH_PORT_NULL && p && !strcmp(nm, "main")) {
+                        target = list[i]; hi = (uintptr_t)pthread_get_stackaddr_np(p); lo = hi - pthread_get_stacksize_np(p);
+                    } else mach_port_deallocate(mach_task_self(), list[i]);
+                }
+                vm_deallocate(mach_task_self(), (vm_address_t)list, n * sizeof(thread_act_t));
+            }
+            if (target == MACH_PORT_NULL) { sleep(1); continue; }
+        }
+        if (thread_suspend(target) != KERN_SUCCESS) { target = MACH_PORT_NULL; continue; }
+        arm_thread_state64_t st; mach_msg_type_number_t cnt = ARM_THREAD_STATE64_COUNT;
+        if (thread_get_state(target, ARM_THREAD_STATE64, (thread_state_t)&st, &cnt) == KERN_SUCCESS) {
+            uintptr_t pc = (uintptr_t)arm_thread_state64_get_pc(st), seen[64]; int ns = 0;
+            prof_count(g_prof_self, pc);
+            prof_count(g_prof_incl, pc); seen[ns++] = pc;
+            uintptr_t lr = (uintptr_t)arm_thread_state64_get_lr(st);
+            if (lr) { prof_count(g_prof_incl, lr); seen[ns++] = lr; }
+            uintptr_t fp = (uintptr_t)arm_thread_state64_get_fp(st);
+            for (int d = 0; d < 200 && fp >= lo && fp + 16 <= hi && !(fp & 7); d++) {
+                uintptr_t ret = ((uintptr_t *)fp)[1], next = ((uintptr_t *)fp)[0];
+                bool dup = false; for (int j = 0; j < ns; j++) if (seen[j] == ret) { dup = true; break; }
+                if (!dup) { prof_count(g_prof_incl, ret); if (ns < 64) seen[ns++] = ret; }
+                if (next <= fp) break;
+                fp = next;
+            }
+            g_prof_samples++;
+        }
+        thread_resume(target);
+        double t = now_ms();
+        if (t - last > 15000) {
+            last = t;
+            tl_log_line("prof: %llu samples", (unsigned long long)g_prof_samples);
+            prof_report(g_prof_self, "self");
+            prof_report(g_prof_incl, "incl");
+            memset(g_prof_self, 0, sizeof(g_prof_self)); memset(g_prof_incl, 0, sizeof(g_prof_incl)); g_prof_samples = 0;
+        }
+    }
+    return NULL;
+}
+static void profiler_maybe_start(void)
+{
+    char path[1024]; const char *home = getenv("HOME");
+    snprintf(path, sizeof(path), "%s/Documents/TL_PROFILE", home ? home : "");
+    /* TL_VIEW_DUMP the same way: a file of that name in Documents (husk.ViewRoot reads the variable) */
+    snprintf(path, sizeof(path), "%s/Documents/TL_VIEW_DUMP", home ? home : "");
+    if (access(path, F_OK) == 0) setenv("TL_VIEW_DUMP", "1", 0);
+    snprintf(path, sizeof(path), "%s/Documents/TL_PROFILE", home ? home : "");
+    if (!getenv("TL_PROFILE") && access(path, F_OK) != 0) return;
+    pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+    pthread_create(&t, &a, profiler_thread, NULL);
+    pthread_attr_destroy(&a);
+}
+
 void tl_gc_start(int mode)
 {
     const char *e = getenv("TL_GC");
@@ -931,6 +1028,7 @@ void tl_gc_start(int mode)
     }
     while (atomic_load(&g_helpers_ready) < g_nhelpers) usleep(200);
     tl_log_line("gc: marking on %d threads", g_nhelpers + 1);
+    profiler_maybe_start();
     pthread_t t;
     pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
     pthread_attr_setstacksize(&a, 8u << 20);
