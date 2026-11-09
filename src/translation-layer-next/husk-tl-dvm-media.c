@@ -226,25 +226,43 @@ static void video_decode(codec *c, const uint8_t *d, size_t n, int64_t pts, int 
 
 /* ---- audio ---- */
 
-/* AudioToolbox wants AAC's AudioSpecificConfig inside an ES descriptor (the 'esds' magic cookie) */
+/* AudioToolbox wants AAC's AudioSpecificConfig inside an ES descriptor (the 'esds' magic cookie). Descriptor sizes are written
+ * in the long form (four bytes, 7 bits each), so an xHE-AAC config (USAC's, longer than plain AAC's) fits too. */
+static size_t put_desc_len(uint8_t *o, size_t n)
+{
+    o[0] = (uint8_t)(0x80 | ((n >> 21) & 0x7F)); o[1] = (uint8_t)(0x80 | ((n >> 14) & 0x7F));
+    o[2] = (uint8_t)(0x80 | ((n >> 7) & 0x7F)); o[3] = (uint8_t)(n & 0x7F);
+    return 4;
+}
 static size_t esds_from_asc(const uint8_t *asc, size_t n, uint8_t *out)
 {
     size_t i = 0;
-    out[i++] = 0x03; out[i++] = (uint8_t)(23 + n); out[i++] = 0; out[i++] = 0; out[i++] = 0;     /* ES_Descriptor, ES_ID, flags */
-    out[i++] = 0x04; out[i++] = (uint8_t)(15 + n); out[i++] = 0x40; out[i++] = 0x15;             /* DecoderConfigDescriptor: AAC, audio stream */
+    size_t dsi = 5 + n, dcd = 13 + dsi, es = 3 + (5 + dcd) + 6;
+    out[i++] = 0x03; i += put_desc_len(out + i, es); out[i++] = 0; out[i++] = 0; out[i++] = 0;    /* ES_Descriptor, ES_ID, flags */
+    out[i++] = 0x04; i += put_desc_len(out + i, dcd); out[i++] = 0x40; out[i++] = 0x15;          /* DecoderConfigDescriptor: AAC, audio */
     out[i++] = 0; out[i++] = 0; out[i++] = 0;                                                     /* buffer size */
     for (int k = 0; k < 8; k++) out[i++] = 0;                                                     /* max and average bitrate */
-    out[i++] = 0x05; out[i++] = (uint8_t)n; memcpy(out + i, asc, n); i += n;                      /* DecoderSpecificInfo */
-    out[i++] = 0x06; out[i++] = 1; out[i++] = 2;                                                  /* SLConfigDescriptor */
+    out[i++] = 0x05; i += put_desc_len(out + i, n); memcpy(out + i, asc, n); i += n;              /* DecoderSpecificInfo */
+    out[i++] = 0x06; i += put_desc_len(out + i, 1); out[i++] = 2;                                 /* SLConfigDescriptor */
     return i;
+}
+/* The AudioSpecificConfig's audio object type: 2 is AAC LC, 5 and 29 HE-AAC, 42 USAC (xHE-AAC, Instagram's videos' audio) */
+static int asc_object_type(const uint8_t *asc, size_t n)
+{
+    if (!asc || n < 1) return 0;
+    int t = asc[0] >> 3;
+    if (t == 31 && n >= 2) t = 32 + (((asc[0] & 7) << 3) | (asc[1] >> 5));
+    return t;
 }
 
 static bool audio_open(codec *c, const uint8_t *asc, size_t asc_n, int rate, int channels)
 {
     memset(&c->in, 0, sizeof(c->in));
-    uint8_t esds[128]; size_t esds_n = 0;
+    uint8_t esds[512]; size_t esds_n = 0;
+    int aot = 0;
     if (c->kind == K_AAC) {
-        if (asc && asc_n && asc_n < 64) {
+        aot = asc_object_type(asc, asc_n);
+        if (asc && asc_n && asc_n < 400) {
             esds_n = esds_from_asc(asc, asc_n, esds);
             UInt32 sz = sizeof(c->in);
             if (AudioFormatGetProperty(kAudioFormatProperty_ASBDFromESDS, (UInt32)esds_n, esds, &sz, &c->in) != noErr) memset(&c->in, 0, sizeof(c->in));
@@ -253,6 +271,10 @@ static bool audio_open(codec *c, const uint8_t *asc, size_t asc_n, int rate, int
             c->in.mFormatID = kAudioFormatMPEG4AAC; c->in.mSampleRate = rate > 0 ? rate : 44100;
             c->in.mChannelsPerFrame = channels > 0 ? (UInt32)channels : 2; c->in.mFramesPerPacket = 1024;
         }
+        /* xHE-AAC: Apple's USAC decoder (iOS 13 on), whatever the descriptor parse said */
+        if (aot == 42) { c->in.mFormatID = kAudioFormatMPEGD_USAC; c->in.mFormatFlags = 0; c->in.mFramesPerPacket = 0;
+                         if (!c->in.mSampleRate) c->in.mSampleRate = rate > 0 ? rate : 44100;
+                         if (!c->in.mChannelsPerFrame) c->in.mChannelsPerFrame = channels > 0 ? (UInt32)channels : 2; }
     } else {
         c->in.mFormatID = kAudioFormatMPEGLayer3; c->in.mSampleRate = rate > 0 ? rate : 44100;
         c->in.mChannelsPerFrame = channels > 0 ? (UInt32)channels : 2; c->in.mFramesPerPacket = 1152;
@@ -263,9 +285,9 @@ static bool audio_open(codec *c, const uint8_t *asc, size_t asc_n, int rate, int
         .mFramesPerPacket = 1, .mBytesPerFrame = 2 * c->in.mChannelsPerFrame, .mChannelsPerFrame = c->in.mChannelsPerFrame, .mBitsPerChannel = 16 };
     if (c->conv) { AudioConverterDispose(c->conv); c->conv = NULL; }
     OSStatus st = AudioConverterNew(&c->in, &c->out, &c->conv);
-    if (st != noErr) { tl_log_line("media: no %s decoder (%d)", c->kind == K_AAC ? "AAC" : "MP3", (int)st); c->conv = NULL; return false; }
+    if (st != noErr) { tl_log_line("media: no %s decoder (%d, object type %d)", c->kind == K_AAC ? "AAC" : "MP3", (int)st, aot); c->conv = NULL; return false; }
     if (esds_n) AudioConverterSetProperty(c->conv, kAudioConverterDecompressionMagicCookie, (UInt32)esds_n, esds);
-    tl_log_line("media: %s decoder, %d Hz, %d channels", c->kind == K_AAC ? "AAC" : "MP3", c->rate, c->channels);
+    tl_log_line("media: %s decoder, %d Hz, %d channels", c->kind != K_AAC ? "MP3" : aot == 42 ? "xHE-AAC (USAC)" : "AAC", c->rate, c->channels);
     return true;
 }
 
