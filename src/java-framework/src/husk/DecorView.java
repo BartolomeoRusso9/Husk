@@ -23,6 +23,8 @@ public final class DecorView extends FrameLayout {
     private View mActionBar;
     private boolean mCloseOnTouchOutside;
     private int mInsetTop, mInsetBottom, mInsetLeft, mInsetRight;
+    /** Edge to edge: the status bar and home indicator areas the app was given as insets and draws under itself. */
+    private int mEdgeTop, mEdgeBottom;
     private final Paint mBarPaint = new Paint();
     private static WindowInsetsController sFallback;
     private TypedValue mMinWidthMajor, mMinWidthMinor;
@@ -132,6 +134,8 @@ public final class DecorView extends FrameLayout {
             return rest;
         }
         if (mStack != null) { FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) mStack.getLayoutParams(); lp.setMargins(0, 0, 0, 0); mStack.setLayoutParams(lp); }
+        mEdgeTop = mWindow.isFloating() ? 0 : mInsetTop;
+        mEdgeBottom = mWindow.isFloating() || in.isVisible(WindowInsets.Type.ime()) ? 0 : mInsetBottom;
         mInsetTop = mInsetBottom = mInsetLeft = mInsetRight = 0;
         return super.dispatchApplyWindowInsets(in);
     }
@@ -144,6 +148,75 @@ public final class DecorView extends FrameLayout {
         // the bars' own colours over the areas the content was kept out of
         if (mInsetTop > 0 && !mWindow.isFloating()) { mBarPaint.setColor(mWindow.getStatusBarColor()); c.drawRect(0, 0, getWidth(), mInsetTop, mBarPaint); }
         if (mInsetBottom > 0 && !mWindow.isFloating()) { mBarPaint.setColor(mWindow.getNavigationBarColor()); c.drawRect(0, getHeight() - mInsetBottom, getWidth(), getHeight(), mBarPaint); }
+        if ((mEdgeTop > 0 || mEdgeBottom > 0) && mWindow.getAttributes().type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) runBarsToEdges(c);
+        // ...which on an iPhone are not bars: the screen's own window asks ViewRoot to run the content's edges into them instead
+        // (an opaque bar colour only: a transparent one already shows what the app draws there)
+        if (!mWindow.isFloating() && mWindow.getAttributes().type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) {
+            husk.ViewRoot.huskExtendEdges(mInsetTop > 0 && Color.alpha(mWindow.getStatusBarColor()) == 255 ? mInsetTop : 0,
+                                          mInsetBottom > 0 && Color.alpha(mWindow.getNavigationBarColor()) == 255 ? mInsetBottom : 0);
+        }
+    }
+
+    /* An app that keeps its content off the bars (fitsSystemWindows, or padding from the insets) leaves the areas under the
+       clock and the home indicator to whatever is behind it: on an Android phone those are the bars, on an iPhone they are the
+       app's own screen. As an iPhone app's top bar and tab bar do, the views that sit against those areas -- a toolbar at the
+       top, a bottom navigation bar at the bottom -- run their own background on to the screen's edge. Only when nothing but
+       the containers they sit in draws there, so an app that draws under the bars itself keeps what it draws. */
+    private final int[] mHit = new int[4];
+    private void runBarsToEdges(Canvas c) {
+        int w = getWidth(), h = getHeight();
+        if (mEdgeTop > 0) runBar(c, w, mEdgeTop + 1, mEdgeTop / 2, mEdgeTop, true, 0, mEdgeTop);
+        if (mEdgeBottom > 0) runBar(c, w, h - mEdgeBottom - 1, h - mEdgeBottom / 2, h - mEdgeBottom, false, h - mEdgeBottom, h);
+    }
+    private void runBar(Canvas c, int w, int py, int bandY, int edge, boolean top, int y0, int y1) {
+        View bar = find(this, 0, 0, w / 2, py, edge, top, w);
+        if (bar == null) return;
+        View inBand = deepest(this, 0, 0, w / 2, bandY);
+        for (View v = bar; ; v = (View) v.getParent()) { if (v == inBand) break; if (v == this || !(v.getParent() instanceof View)) return; }
+        Drawable bg = bar.getBackground();
+        int[] r = mHit;
+        Rect old = new Rect(bg.getBounds());
+        c.save();
+        c.clipRect(0, y0, w, y1);
+        // the background drawn as it is on the bar, stretched by the band: a colour stays a colour, a gradient runs on
+        bg.setBounds(r[0], top ? y0 : r[1], r[2], top ? r[3] : y1);
+        bg.draw(c);
+        bg.setBounds(old);
+        c.restore();
+    }
+    private static boolean opaqueBg(View v) {
+        Drawable d = v.getBackground();
+        if (d == null || d.getAlpha() == 0 || v.getAlpha() < 1f) return false;
+        if (d instanceof android.graphics.drawable.ColorDrawable) return android.graphics.Color.alpha(((android.graphics.drawable.ColorDrawable) d).getColor()) == 255;
+        return d.getOpacity() != PixelFormat.TRANSPARENT;
+    }
+    /** The topmost full-width view with an opaque background whose top (or bottom) edge is at the band's, under (px, py). */
+    private View find(ViewGroup g, int ox, int oy, int px, int py, int edge, boolean top, int w) {
+        for (int i = g.getChildCount() - 1; i >= 0; i--) {
+            View ch = g.getChildAt(i);
+            if (ch.getVisibility() != View.VISIBLE) continue;
+            int cx = ox + ch.getLeft() - g.getScrollX() + (int) ch.getTranslationX(), cy = oy + ch.getTop() - g.getScrollY() + (int) ch.getTranslationY();
+            int cw = ch.getWidth(), chh = ch.getHeight();
+            if (px < cx || px >= cx + cw || py < cy || py >= cy + chh) continue;
+            if (ch instanceof ViewGroup) { View f = find((ViewGroup) ch, cx, cy, px, py, edge, top, w); if (f != null) return f; }
+            if (cw * 10 >= w * 9 && Math.abs((top ? cy : cy + chh) - edge) <= 2 && opaqueBg(ch)) {
+                mHit[0] = cx; mHit[1] = cy; mHit[2] = cx + cw; mHit[3] = cy + chh;
+                return ch;
+            }
+            return null;    /* the topmost view under the point that is not the bar covers it */
+        }
+        return null;
+    }
+    /** The topmost view under (px, py). */
+    private static View deepest(ViewGroup g, int ox, int oy, int px, int py) {
+        for (int i = g.getChildCount() - 1; i >= 0; i--) {
+            View ch = g.getChildAt(i);
+            if (ch.getVisibility() != View.VISIBLE) continue;
+            int cx = ox + ch.getLeft() - g.getScrollX() + (int) ch.getTranslationX(), cy = oy + ch.getTop() - g.getScrollY() + (int) ch.getTranslationY();
+            if (px < cx || px >= cx + ch.getWidth() || py < cy || py >= cy + ch.getHeight()) continue;
+            return ch instanceof ViewGroup ? deepest((ViewGroup) ch, cx, cy, px, py) : ch;
+        }
+        return g;
     }
 
     // ---- events

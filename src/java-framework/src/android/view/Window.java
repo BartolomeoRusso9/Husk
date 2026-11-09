@@ -50,7 +50,7 @@ public class Window {
     private ViewGroup mContentParent;
     private int mFeatures, mLocalFeatures;
     private WindowManager mWindowManager;
-    private boolean mFloating, mDecorFits = true, mActive, mDestroyed, mIsActivityWindow;
+    private boolean mFloating, mDecorFits = true, mActive, mDestroyed, mIsActivityWindow, mEdgeToEdge;
     private int mStatusBarColor, mNavigationBarColor;
     private CharSequence mTitle;
     private Drawable mBackground;
@@ -83,6 +83,14 @@ public class Window {
         mDefaultSoftInput = a.getInt(husk.S.Window_windowSoftInputMode, 0);
         if (!mSoftInputSet) mAttrs.softInputMode = mDefaultSoftInput;
         mAttrs.layoutInDisplayCutoutMode = a.getInt(husk.S.Window_windowLayoutInDisplayCutoutMode, 0);
+        /* Android 15's edge to edge: an app built for it (target SDK 35 or later) draws under the status bar and the navigation bar
+           and keeps its own content clear of them from the insets, unless its theme opts out. That is how an iPhone app looks: its
+           colours run under the clock and the home indicator. */
+        if (husk.Manifest.targetSdk >= 35) {
+            TypedArray o = c.obtainStyledAttributes(new int[] { android.R.attr.windowOptOutEdgeToEdgeEnforcement });
+            mEdgeToEdge = !o.getBoolean(0, false);
+            o.recycle();
+        }
         if (mFloating) {
             if (!mLayoutSet) { mAttrs.width = WindowManager.LayoutParams.WRAP_CONTENT; mAttrs.height = WindowManager.LayoutParams.WRAP_CONTENT; }
             if (!mGravitySet) mAttrs.gravity = Gravity.CENTER;
@@ -186,9 +194,9 @@ public class Window {
     public void setBackgroundDrawable(Drawable d) { mBackgroundSet = true; mBackground = d; if (mDecor != null) mDecor.setWindowBackground(d); }
     public void setBackgroundDrawableResource(int id) { setBackgroundDrawable(mContext.getDrawable(id)); }
     public void setStatusBarColor(int c) { mStatusBarColorSet = true; mStatusBarColor = c; if (mDecor != null) mDecor.invalidate(); }
-    public int getStatusBarColor() { ensureStyle(); return mStatusBarColor; }
+    public int getStatusBarColor() { ensureStyle(); return mEdgeToEdge ? 0 : mStatusBarColor; }
     public void setNavigationBarColor(int c) { mNavigationBarColorSet = true; mNavigationBarColor = c; if (mDecor != null) mDecor.invalidate(); }
-    public int getNavigationBarColor() { ensureStyle(); return mNavigationBarColor; }
+    public int getNavigationBarColor() { ensureStyle(); return mEdgeToEdge ? 0 : mNavigationBarColor; }
     public void setNavigationBarDividerColor(int c) {}
     public void setStatusBarContrastEnforced(boolean e) {}
     public void setNavigationBarContrastEnforced(boolean e) {}
@@ -196,7 +204,7 @@ public class Window {
     public boolean isNavigationBarContrastEnforced() { return false; }
     public void setDecorFitsSystemWindows(boolean f) { mDecorFits = f; if (mDecor != null) mDecor.requestApplyInsets(); }
     public boolean huskDecorFits() {
-        if (!mDecorFits) return false;
+        if (!mDecorFits || mEdgeToEdge) return false;
         int f = mAttrs.flags;
         if ((f & (WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)) != 0) return false;
         int sys = mDecor != null ? mDecor.getSystemUiVisibility() | mAttrs.systemUiVisibility : mAttrs.systemUiVisibility;
