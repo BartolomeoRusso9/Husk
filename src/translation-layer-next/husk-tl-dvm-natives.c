@@ -855,7 +855,22 @@ NAT(Throwable_getStack)
 NAT(Runtime_freeMemory) { UNUSED; *ret = J(256ll << 20); return true; }
 NAT(Runtime_maxMemory) { UNUSED; *ret = J(512ll << 20); return true; }
 NAT(Runtime_gc) { UNUSED; return true; }
-NAT(Runtime_exit) { (void)self; (void)ret; tl_log_line("dvm: Runtime.exit(%d)", a[0].i); _exit(a[0].i); }
+/* Runtime.exit: a Java app's goes through husk.AppRunner.requestExit, which tells an app restarting itself (an activity started
+ * just before) from one ending, and ends the app rather than Husk (the main thread returns to let that be decided; another one
+ * waits there for good). With no app running, the process ends as before. */
+NAT(Runtime_exit)
+{
+    (void)self; (void)ret;
+    tl_log_line("dvm: Runtime.exit(%d)", a[0].i);
+    dvm_class *c = dvm_class_of(tl_jni_class("husk/AppRunner"));
+    dvm_method *m = c ? dvm_find_method(c, "requestExit", "(Ljava/lang/String;)Z", false) : NULL;
+    if (m) {
+        jvalue p[1], r = { 0 };
+        p[0] = L(dvm_new_string_utf8("Runtime.exit"));
+        if (dvm_call(m, NULL, p, &r) && r.z) return true;
+    }
+    _exit(a[0].i);
+}
 NAT(Runtime_nativeLoad)
 {
     (void)self;

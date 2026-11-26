@@ -44,6 +44,14 @@ public class ContextWrapper extends Context {
     @Override public void sendBroadcast(Intent intent) { b().sendBroadcast(intent); }
     @Override public Intent registerReceiver(BroadcastReceiver r, IntentFilter f) { return b().registerReceiver(r, f); }
     @Override public void unregisterReceiver(BroadcastReceiver r) { b().unregisterReceiver(r); }
+    /* the other overloads go to the base too, as Android's do: Context's defaults call back into the two-argument one, and an app
+       whose Application overrides that to call one of these (React Native's MainApplication adds RECEIVER_EXPORTED) looped until
+       StackOverflowError */
+    @Override public Intent registerReceiver(BroadcastReceiver r, IntentFilter f, int flags) { return b().registerReceiver(r, f, flags); }
+    @Override public Intent registerReceiver(BroadcastReceiver r, IntentFilter f, String perm, android.os.Handler h) { return b().registerReceiver(r, f, perm, h); }
+    @Override public Intent registerReceiver(BroadcastReceiver r, IntentFilter f, String perm, android.os.Handler h, int flags) { return b().registerReceiver(r, f, perm, h, flags); }
+    @Override public void sendBroadcast(Intent i, String perm) { b().sendBroadcast(i, perm); }
+    @Override public boolean bindService(Intent s, int flags, java.util.concurrent.Executor e, ServiceConnection c) { return b().bindService(s, flags, e, c); }
     @Override public ComponentName startService(Intent s) { return b().startService(s); }
     @Override public boolean stopService(Intent s) { return b().stopService(s); }
     @Override public boolean bindService(Intent s, ServiceConnection c, int flags) { return b().bindService(s, c, flags); }

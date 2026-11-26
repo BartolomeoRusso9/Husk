@@ -1011,6 +1011,16 @@ bool dvm_call(dvm_method *m, jobj *self, const jvalue *params, jvalue *ret)
         t_depth--;
         if (t_overflowing) return false;
         t_overflowing = true;
+        /* the calls on top of the stack, for the first few: an overflow is nearly always a loop, and this shows which */
+        static _Atomic int logged;
+        if (atomic_fetch_add(&logged, 1) < 3) {
+            tl_log_line("dvm: StackOverflowError at depth %d (%s), the innermost calls:", t_depth, sp < t_stack_low + (128u << 10) ? "native stack" : "frames");
+            for (int up = 1; up <= 40 && t_depth - up >= 0; up++) {
+                int i = t_depth - up;
+                dvm_method *cm = i < 8192 ? t_frames[i] : NULL;
+                tl_log_line("dvm:   %s.%s%s @%u", cm ? cm->cls->name : "?", cm ? cm->name : "?", cm ? cm->sig : "", i < 8192 ? t_pcs[i] : 0);
+            }
+        }
         bool r = dvm_throw("java/lang/StackOverflowError", "stack size 8000 frames");
         t_overflowing = false;
         return r;

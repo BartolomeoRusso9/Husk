@@ -296,7 +296,16 @@ public final class ViewRoot implements ViewParent {
         try {
             int ws, hs;
             int lw = mLp.width, lh = mLp.height;
-            int maxW = sw, maxH = sh;
+            // where the window may go: the whole screen, or for windows that do not fill it (dialogs, popups, toasts) the part of
+            // it clear of the bars and the keyboard -- which is also what such a window filling its parent fills, as on Android (a
+            // React Native Modal, MATCH_PARENT, was measured the screen's height and centred in the smaller area: everything in it,
+            // a dropdown placed from its anchor's position, sat that much too high)
+            int g = mLp.gravity;
+            if (g == 0 && (lw != ViewGroup.LayoutParams.MATCH_PARENT || lh != ViewGroup.LayoutParams.MATCH_PARENT)) g = Gravity.TOP | Gravity.LEFT;
+            Rect area = new Rect(0, 0, sw, sh);
+            if (g != 0 && (mLp.type >= 1000 || (mLp.flags & WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS) == 0 && mLp.type != WindowManager.LayoutParams.TYPE_BASE_APPLICATION))
+                area.set(sInsets[0], sInsets[1], sw - sInsets[2], sh - Math.max(sInsets[3], sImeBottom));
+            int maxW = area.width(), maxH = area.height();
             if (lw == ViewGroup.LayoutParams.MATCH_PARENT) ws = View.MeasureSpec.makeMeasureSpec(maxW, View.MeasureSpec.EXACTLY);
             else if (lw == ViewGroup.LayoutParams.WRAP_CONTENT) ws = View.MeasureSpec.makeMeasureSpec(maxW, View.MeasureSpec.AT_MOST);
             else ws = View.MeasureSpec.makeMeasureSpec(lw, View.MeasureSpec.EXACTLY);
@@ -305,17 +314,10 @@ public final class ViewRoot implements ViewParent {
             else hs = View.MeasureSpec.makeMeasureSpec(lh, View.MeasureSpec.EXACTLY);
             mView.measure(ws, hs);
             int w = mView.getMeasuredWidth(), h = mView.getMeasuredHeight();
-            // where the window goes: gravity and offsets for windows that do not fill the screen (dialogs, popups, toasts)
-            int g = mLp.gravity;
+            // where the window goes: gravity and offsets for windows that do not fill the screen
             Rect out = new Rect();
-            if (g == 0 && (lw != ViewGroup.LayoutParams.MATCH_PARENT || lh != ViewGroup.LayoutParams.MATCH_PARENT)) g = Gravity.TOP | Gravity.LEFT;
             if (g == 0) out.set(0, 0, w, h);
-            else {
-                Rect area = new Rect(0, 0, sw, sh);
-                if (mLp.type >= 1000 || (mLp.flags & WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS) == 0 && mLp.type != WindowManager.LayoutParams.TYPE_BASE_APPLICATION)
-                    area.set(sInsets[0], sInsets[1], sw - sInsets[2], sh - Math.max(sInsets[3], sImeBottom));
-                Gravity.apply(g, w, h, area, mLp.x, mLp.y, out);
-            }
+            else Gravity.apply(g, w, h, area, mLp.x, mLp.y, out);
             mX = out.left; mY = out.top; mW = w; mH = h;
             mView.layout(0, 0, w, h);
         } finally { mInLayout = false; }
@@ -350,17 +352,25 @@ public final class ViewRoot implements ViewParent {
     private static boolean sBlankTopOn, sBlankBottomOn, sDrawingFull;
     /* DecorView.draw, with its background drawn and before its views: the bands as they are now, and after its views, whether
        they changed */
+    /* whether this frame redraws a band: a full one does, a partial one where its dirty rows reach into the band */
+    private static int sDirtyTop, sDirtyBottom;
+    private static boolean liveTop(int top) { return sDrawingFull || sDirtyTop < top; }
+    private static boolean liveBottom(int bottom, int sh) { return sDrawingFull || sDirtyBottom > sh - bottom; }
     public static void huskBandsBefore(int top, int bottom) {
-        if (!sDrawingFull || sScreen == null) return;
+        if (sScreen == null) return;
         int sh = sScreen.getHeight();
-        if (top > 0 && top < sh) Gfx.bmBandKeep(sScreen.huskNative(), 0, top, 0);
-        if (bottom > 0 && bottom < sh) Gfx.bmBandKeep(sScreen.huskNative(), sh - bottom, sh, 1);
+        if (top > 0 && top < sh && liveTop(top)) Gfx.bmBandKeep(sScreen.huskNative(), 0, top, 0);
+        if (bottom > 0 && bottom < sh && liveBottom(bottom, sh)) Gfx.bmBandKeep(sScreen.huskNative(), sh - bottom, sh, 1);
     }
     public static boolean huskBandsAfter(int top, int bottom) {
-        if (!sDrawingFull || sScreen == null) return sBlankTopOn || sBlankBottomOn;
+        if (sScreen == null) return sBlankTopOn || sBlankBottomOn;
         int sh = sScreen.getHeight();
-        sBlankTopOn = top > 0 && top < sh && Gfx.bmBandSame(sScreen.huskNative(), 0, top, 0);
-        sBlankBottomOn = bottom > 0 && bottom < sh && Gfx.bmBandSame(sScreen.huskNative(), sh - bottom, sh, 1);
+        boolean wasTop = sBlankTopOn, wasBottom = sBlankBottomOn;
+        if (liveTop(top)) sBlankTopOn = top > 0 && top < sh && Gfx.bmBandSame(sScreen.huskNative(), 0, top, 0);
+        if (liveBottom(bottom, sh)) sBlankBottomOn = bottom > 0 && bottom < sh && Gfx.bmBandSame(sScreen.huskNative(), sh - bottom, sh, 1);
+        /* the app drew into a band it had left alone (a list scrolled under the bar): the rest of the band still holds the
+           stretched edge, so the next frame draws the whole screen */
+        if (!sDrawingFull && (wasTop && !sBlankTopOn || wasBottom && !sBlankBottomOn)) scheduleFrame();
         return sBlankTopOn || sBlankBottomOn;
     }
     public static void huskExtendIfBlank(int top, int bottom) { sBlankTop = top; sBlankBottom = bottom; }
@@ -389,6 +399,7 @@ public final class ViewRoot implements ViewParent {
         sExtendTop = sExtendBottom = 0;
         sBlankTop = sBlankBottom = 0;
         sDrawingFull = !partial;
+        sDirtyTop = dt; sDirtyBottom = db;
         for (ViewRoot r : roots) {
             if (r.mRemoved || r.mView.getVisibility() != View.VISIBLE) continue;
             if ((r.mLp.flags & WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 && r.mLp.dimAmount > 0) {

@@ -207,7 +207,9 @@ public abstract class Uri implements Comparable<Uri>, android.os.Parcelable {
             if (opaque != null) b.append(opaque);
             else {
                 if (authority != null) b.append("//").append(authority);
-                if (path != null && !path.isEmpty()) { if (authority != null && !path.startsWith("/")) b.append('/'); b.append(path); }
+                // a relative path is made absolute when there is a scheme or an authority, as Android's PathPart.makeAbsolute: React
+                // Native's Uri.Builder().scheme("res").path(id) is "res:/id", which image loaders look for
+                if (path != null && !path.isEmpty()) { if ((authority != null || scheme != null) && !path.startsWith("/")) b.append('/'); b.append(path); }
                 if (query != null) b.append('?').append(query);
             }
             if (fragment != null) b.append('#').append(fragment);

@@ -214,11 +214,31 @@ public final class AppRunner {
         Intent i = a.getIntent();
         return i != null && i.getComponent() != null ? i.getComponent().getClassName() : a.getClass().getName();
     }
+    /* Activities of the app's own asked for so far: an exit asked for just before one (a restart) is not an exit. */
+    private static int sLaunches;
+    /** Runtime.exit and Process.killProcess(myPid()): the app ends -- unless it is restarting itself (ProcessPhoenix and the like:
+     *  start the launcher activity, kill the process, and let Android start a new one). There is one process here, so the
+     *  activity it started takes over in this one. Decided once the main thread has run what was already asked of it; false when
+     *  there is no app running to decide (the caller exits the process itself). */
+    public static boolean requestExit(final String why) {
+        final Handler h = sHandler;
+        if (h == null) return false;
+        final int at = sLaunches;
+        h.post(() -> h.post(() -> {
+            if (sLaunches != at) { android.util.Log.i("Husk", why + ": the app started an activity first -- a restart, it goes on"); return; }
+            android.util.Log.i("Husk", why + ": the app ends");
+            Native.exit();
+        }));
+        /* a thread other than the main one does not come back from an exit */
+        if (Looper.myLooper() != Looper.getMainLooper()) for (;;) { try { Thread.sleep(Long.MAX_VALUE); } catch (InterruptedException e) {} }
+        return true;
+    }
     /** Context.startActivity: an activity of the app's own, or something the host can open (a web page, mail, the store). */
     public static void startActivity(Context from, Intent i, int request, Bundle opts) {
         Manifest.Component c = Manifest.resolve(i);
         android.util.Log.d("Husk", "startActivity " + i + (c != null ? " -> " + c.name : " (not an activity of this app)"));
         if (c != null) {
+            sLaunches++;
             final Activity caller = from instanceof Activity ? (Activity) from : top();
             final Intent intent = new Intent(i);
             if (intent.getComponent() == null) intent.setComponent(new ComponentName(Native.packageName(), c.name));
